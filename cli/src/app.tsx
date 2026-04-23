@@ -217,23 +217,108 @@ export function App(props: AppProps): React.ReactElement {
       width="100%"
       height="100%"
     >
-      <box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
-        {lines.flatMap((l, i) => {
-          const fg =
-            l.role === "user" ? "white" : l.role === "agent" ? "green" : "gray";
-          const prefix =
-            l.role === "user" ? "> " : l.role === "agent" ? "~ " : "  ";
-          // Split on newlines so multi-line agent output renders as
-          // separate <text> rows (OpenTUI <text> is single-line).
-          return l.text.split("\n").map((segment, j) => (
-            <text key={`${i}:${j}`} fg={fg}>
-              {j === 0 ? prefix : "  "}
-              {segment}
-            </text>
-          ));
-        })}
-      </box>
+      <scrollbox
+        flexGrow={1}
+        flexShrink={1}
+        scrollY
+        stickyScroll
+        stickyStart="bottom"
+        contentOptions={{ flexDirection: "column", gap: 1 }}
+      >
+        {lines.map((l, i) => (
+          <MessageCard key={i} role={l.role} text={l.text} />
+        ))}
+      </scrollbox>
       <ChatInput prompt={">"} onSubmit={handleSubmit} />
+    </box>
+  );
+}
+
+interface CardProps {
+  role: "system" | "user" | "agent";
+  text: string;
+}
+
+const ROLE_STYLE: Record<
+  CardProps["role"],
+  { label: string; fg: string; border: string }
+> = {
+  user: { label: "you", fg: "white", border: "cyan" },
+  agent: { label: "codebuff", fg: "green", border: "green" },
+  system: { label: "system", fg: "gray", border: "gray" },
+};
+
+type Segment =
+  | { kind: "text"; text: string }
+  | { kind: "tool"; name: string; summary: string };
+
+const TOOL_RE = /<([a-zA-Z][\w-]*)\b([^>]*?)(?:\/>|>([\s\S]*?)<\/\1\s*>)/g;
+
+function parseSegments(input: string): Segment[] {
+  const out: Segment[] = [];
+  let last = 0;
+  for (const m of input.matchAll(TOOL_RE)) {
+    const start = m.index ?? 0;
+    if (start > last) {
+      const t = input.slice(last, start);
+      if (t.trim()) out.push({ kind: "text", text: t });
+    }
+    const name = m[1];
+    const inner = (m[3] ?? "").trim();
+    const summary = inner
+      ? inner.split("\n")[0].slice(0, 60) +
+        (inner.length > 60 || inner.includes("\n") ? "…" : "")
+      : "";
+    out.push({ kind: "tool", name, summary });
+    last = start + m[0].length;
+  }
+  if (last < input.length) {
+    const t = input.slice(last);
+    if (t.trim()) out.push({ kind: "text", text: t });
+  }
+  if (out.length === 0) out.push({ kind: "text", text: input });
+  return out;
+}
+
+function MessageCard({ role, text }: CardProps): React.ReactElement {
+  const style = ROLE_STYLE[role];
+  const segments = role === "agent" ? parseSegments(text) : [{ kind: "text" as const, text }];
+
+  return (
+    <box
+      flexDirection="column"
+      borderStyle="single"
+      borderColor={style.border}
+      paddingLeft={1}
+      paddingRight={1}
+      width="100%"
+    >
+      <text fg={style.border} attributes={1}>
+        {style.label}
+      </text>
+      {segments.map((seg, i) =>
+        seg.kind === "text" ? (
+          <text key={i} fg={style.fg} wrapMode="word">
+            {seg.text}
+          </text>
+        ) : (
+          <box
+            key={i}
+            flexDirection="row"
+            borderStyle="rounded"
+            borderColor="magenta"
+            paddingLeft={1}
+            paddingRight={1}
+          >
+            <text fg="magenta" attributes={1}>
+              ⚙ {seg.name}
+            </text>
+            {seg.summary ? (
+              <text fg="gray"> — {seg.summary}</text>
+            ) : null}
+          </box>
+        ),
+      )}
     </box>
   );
 }
