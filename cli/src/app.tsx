@@ -25,6 +25,8 @@ export interface AppProps {
 interface Line {
   role: "system" | "user" | "agent";
   text: string;
+  reasoning?: string;
+  header?: string;
 }
 
 function dispatchSlash(
@@ -73,7 +75,7 @@ async function streamToBackend(
   ctx: { projectRoot: string; agentId: string | null; mode: AppMode },
   history: Array<{ role: "user" | "assistant"; content: string }>,
   onHeader: (header: string) => void,
-  onToken: (token: string) => void,
+  onToken: (token: string, kind: "content" | "reasoning") => void,
 ): Promise<{ ok: boolean; error?: string }> {
   const env = getCliEnv();
 
@@ -102,7 +104,7 @@ async function streamToBackend(
         temperature: decision.temperature,
         max_tokens: decision.maxTokens,
       },
-      { onToken },
+      { onToken: (t, k) => onToken(t, k ?? "content") },
       env.FIREWORKS_API_KEY,
     );
     return { ok: true };
@@ -170,21 +172,22 @@ export function App(props: AppProps): React.ReactElement {
       return [
         ...prev,
         { role: "user", text },
-        { role: "agent", text: "…" },
+        { role: "agent", text: "", reasoning: "", header: "thinking…" },
       ];
     });
 
-    const updateAgent = (next: string): void => {
+    const patchAgent = (patch: Partial<Line>): void => {
       setLines((prev) => {
         if (agentIdx < 0 || agentIdx >= prev.length) return prev;
         const copy = prev.slice();
-        copy[agentIdx] = { role: "agent", text: next };
+        copy[agentIdx] = { ...copy[agentIdx], ...patch };
         return copy;
       });
     };
 
     let header = "";
     let body = "";
+    let reasoning = "";
     const result = await streamToBackend(
       text,
       {
@@ -195,18 +198,23 @@ export function App(props: AppProps): React.ReactElement {
       history,
       (h) => {
         header = h;
-        updateAgent(`${header}\n`);
+        patchAgent({ header });
       },
-      (token) => {
-        body += token;
-        updateAgent(`${header}\n${body}`);
+      (token, kind) => {
+        if (kind === "reasoning") {
+          reasoning += token;
+          patchAgent({ reasoning });
+        } else {
+          body += token;
+          patchAgent({ text: body });
+        }
       },
     );
 
     if (!result.ok) {
-      updateAgent(`[error] ${result.error}`);
-    } else if (!body) {
-      updateAgent(`${header}\n(empty response)`);
+      patchAgent({ text: `[error] ${result.error}`, header });
+    } else if (!body && !reasoning) {
+      patchAgent({ text: "(empty response)", header });
     }
   }
 
@@ -226,7 +234,13 @@ export function App(props: AppProps): React.ReactElement {
         contentOptions={{ flexDirection: "column", gap: 1 }}
       >
         {lines.map((l, i) => (
-          <MessageCard key={i} role={l.role} text={l.text} />
+          <MessageCard
+            key={i}
+            role={l.role}
+            text={l.text}
+            reasoning={l.reasoning}
+            header={l.header}
+          />
         ))}
       </scrollbox>
       <ChatInput prompt={">"} onSubmit={handleSubmit} />
@@ -237,6 +251,8 @@ export function App(props: AppProps): React.ReactElement {
 interface CardProps {
   role: "system" | "user" | "agent";
   text: string;
+  reasoning?: string;
+  header?: string;
 }
 
 const ROLE_STYLE: Record<
@@ -280,9 +296,14 @@ function parseSegments(input: string): Segment[] {
   return out;
 }
 
-function MessageCard({ role, text }: CardProps): React.ReactElement {
+function MessageCard({ role, text, reasoning, header }: CardProps): React.ReactElement {
   const style = ROLE_STYLE[role];
-  const segments = role === "agent" ? parseSegments(text) : [{ kind: "text" as const, text }];
+  const segments =
+    role === "agent" && text
+      ? parseSegments(text)
+      : text
+        ? [{ kind: "text" as const, text }]
+        : [];
 
   return (
     <box
@@ -293,9 +314,29 @@ function MessageCard({ role, text }: CardProps): React.ReactElement {
       paddingRight={1}
       width="100%"
     >
-      <text fg={style.border} attributes={1}>
-        {style.label}
-      </text>
+      <box flexDirection="row">
+        <text fg={style.border} attributes={1}>
+          {style.label}
+        </text>
+        {header ? <text fg="gray"> {header}</text> : null}
+      </box>
+      {role === "agent" && reasoning ? (
+        <box
+          flexDirection="column"
+          borderStyle="rounded"
+          borderColor="gray"
+          paddingLeft={1}
+          paddingRight={1}
+          marginTop={1}
+        >
+          <text fg="gray" attributes={1}>
+            ⌁ thinking
+          </text>
+          <text fg="gray" wrapMode="word">
+            {reasoning}
+          </text>
+        </box>
+      ) : null}
       {segments.map((seg, i) =>
         seg.kind === "text" ? (
           <text key={i} fg={style.fg} wrapMode="word">

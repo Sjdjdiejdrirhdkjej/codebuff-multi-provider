@@ -88,8 +88,10 @@ export async function callFireworks(
   return parsed;
 }
 
+export type TokenKind = "content" | "reasoning";
+
 export interface StreamHandlers {
-  onToken: (chunk: string) => void;
+  onToken: (chunk: string, kind?: TokenKind) => void;
   onDone?: (finishReason: string | null) => void;
 }
 
@@ -147,8 +149,9 @@ export async function streamFireworks(
             }>;
           };
           const choice = parsed.choices?.[0];
-          const token = choice?.delta?.content ?? choice?.delta?.reasoning_content;
-          if (token) handlers.onToken(token);
+          if (choice?.delta?.content) handlers.onToken(choice.delta.content, "content");
+          if (choice?.delta?.reasoning_content)
+            handlers.onToken(choice.delta.reasoning_content, "reasoning");
           if (choice?.finish_reason) finishReason = choice.finish_reason;
         } catch {
           /* ignore malformed chunks */
