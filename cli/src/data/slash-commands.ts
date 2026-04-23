@@ -112,6 +112,12 @@ const ALL_SLASH_COMMANDS: SlashCommand[] = [
     aliases: ['credits'],
   },
   {
+    id: 'add-credits',
+    label: 'add-credits',
+    description: 'Add 1000 credits to your account',
+    aliases: ['add:credits', 'add'],
+  },
+  {
     id: 'subscribe',
     label: 'subscribe',
     description: 'Subscribe to get more usage',

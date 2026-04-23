@@ -505,25 +505,7 @@ export async function postChatCompletions(params: {
       nextQuotaReset,
     } = await getUserUsageData({ userId, logger, includeSubscriptionCredits })
 
-    // Credit check
-    if (totalRemaining <= 0 && !isFreeModeRequest) {
-      trackEvent({
-        event: AnalyticsEvent.CHAT_COMPLETIONS_INSUFFICIENT_CREDITS,
-        userId,
-        properties: {
-          totalRemaining,
-          nextQuotaReset,
-        },
-        logger,
-      })
-      const resetCountdown = formatQuotaResetCountdown(nextQuotaReset)
-      return NextResponse.json(
-        {
-          message: `Out of credits. Please add credits at ${env.NEXT_PUBLIC_CODEBUFF_APP_URL}/usage. Your free credits reset ${resetCountdown}.`,
-        },
-        { status: 402 },
-      )
-    }
+    // Credit check disabled
 
     const openrouterApiKey = req.headers.get(BYOK_OPENROUTER_HEADER)
 

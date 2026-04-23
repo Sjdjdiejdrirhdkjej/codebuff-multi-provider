@@ -193,6 +193,58 @@ const ALL_COMMANDS: CommandDefinition[] = [
     },
   }),
   defineCommand({
+    name: 'add-credits',
+    aliases: ['add:credits'],
+    handler: async (params) => {
+      const { getAuthToken } = await import('../utils/auth')
+      const { env } = await import('@codebuff/common/env')
+      const authToken = getAuthToken()
+
+      if (!authToken) {
+        params.setMessages((prev) => [
+          ...prev,
+          getSystemMessage('Please log in first to add credits.'),
+        ])
+        clearInput(params)
+        return
+      }
+
+      try {
+        const appUrl = env.NEXT_PUBLIC_CODEBUFF_APP_URL
+        const response = await fetch(`${appUrl}/api/v1/credits/add`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${authToken}`,
+          },
+        })
+
+        if (!response.ok) {
+          throw new Error(`Failed to add credits: ${response.statusText}`)
+        }
+
+        const data = await response.json()
+        params.setMessages((prev) => [
+          ...prev,
+          getSystemMessage(data.message || 'Successfully added credits.'),
+        ])
+
+        // Refresh usage data to show new balance
+        const { usageQueryKeys } = await import('../hooks/use-usage-query')
+        const { queryClient } = await import('../app')
+        queryClient.invalidateQueries({ queryKey: usageQueryKeys.current() })
+
+      } catch (error) {
+        params.setMessages((prev) => [
+          ...prev,
+          getSystemMessage(`Error adding credits: ${error instanceof Error ? error.message : String(error)}`),
+        ])
+      }
+
+      params.saveToHistory(params.inputValue.trim())
+      clearInput(params)
+    },
+  }),
+  defineCommand({
     name: 'ads:disable',
     handler: (params) => {
       const { postUserMessage } = handleAdsDisable()
