@@ -76,13 +76,6 @@ async function streamToBackend(
   onToken: (token: string) => void,
 ): Promise<{ ok: boolean; error?: string }> {
   const env = getCliEnv();
-  if (!env.FIREWORKS_API_KEY) {
-    return {
-      ok: false,
-      error:
-        "FIREWORKS_API_KEY is not set. Add it to your environment to enable the AI backend.",
-    };
-  }
 
   const decision = route(prompt, {
     mode: ctx.mode,

@@ -43,18 +43,15 @@ export async function callFireworks(
   req: FireworksRequest,
   apiKey: string = process.env.FIREWORKS_API_KEY ?? "",
 ): Promise<FireworksResponse> {
-  if (!apiKey) {
-    throw new FireworksError("FIREWORKS_API_KEY is not set");
-  }
-
   const started = Date.now();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "application/json",
+  };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   const res = await fetch(FIREWORKS_URL, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers,
     body: JSON.stringify(req),
   });
 
@@ -100,17 +97,15 @@ export async function streamFireworks(
   handlers: StreamHandlers,
   apiKey: string = process.env.FIREWORKS_API_KEY ?? "",
 ): Promise<void> {
-  if (!apiKey) {
-    throw new FireworksError("FIREWORKS_API_KEY is not set");
-  }
   const started = Date.now();
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    Accept: "text/event-stream",
+  };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   const res = await fetch(FIREWORKS_URL, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Accept: "text/event-stream",
-      Authorization: `Bearer ${apiKey}`,
-    },
+    headers,
     body: JSON.stringify({ ...req, stream: true }),
   });
 
