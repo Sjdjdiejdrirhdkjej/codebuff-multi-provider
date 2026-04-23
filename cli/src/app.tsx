@@ -218,19 +218,26 @@ export function App(props: AppProps): React.ReactElement {
   }
 
   return (
-    <box flexDirection="column" padding={1}>
-      <box flexDirection="column" flexGrow={1}>
-        {lines.map((l, i) => {
+    <box
+      flexDirection="column"
+      padding={1}
+      width="100%"
+      height="100%"
+    >
+      <box flexDirection="column" flexGrow={1} flexShrink={1} overflow="hidden">
+        {lines.flatMap((l, i) => {
           const fg =
             l.role === "user" ? "white" : l.role === "agent" ? "green" : "gray";
           const prefix =
             l.role === "user" ? "> " : l.role === "agent" ? "~ " : "  ";
-          return (
-            <text key={i} fg={fg}>
-              {prefix}
-              {l.text}
+          // Split on newlines so multi-line agent output renders as
+          // separate <text> rows (OpenTUI <text> is single-line).
+          return l.text.split("\n").map((segment, j) => (
+            <text key={`${i}:${j}`} fg={fg}>
+              {j === 0 ? prefix : "  "}
+              {segment}
             </text>
-          );
+          ));
         })}
       </box>
       <ChatInput prompt={">"} onSubmit={handleSubmit} />
