@@ -131,6 +131,7 @@ export function App(props: AppProps): React.ReactElement {
     },
     { role: "system", text: "Type /help for commands, /exit to quit." },
   ]);
+  const [showThinking, setShowThinking] = useState(true);
 
   useEffect(() => {
     if (props.initialPrompt) {
@@ -141,6 +142,19 @@ export function App(props: AppProps): React.ReactElement {
 
   async function handleSubmit(text: string): Promise<void> {
     if (text.startsWith("/")) {
+      const cmd = text.slice(1).split(/\s+/)[0];
+      if (cmd === "think") {
+        setShowThinking((v) => !v);
+        setLines((prev) => [
+          ...prev,
+          { role: "user", text },
+          {
+            role: "system",
+            text: `thinking panel ${showThinking ? "hidden" : "shown"}.`,
+          },
+        ]);
+        return;
+      }
       const { reply, exit } = dispatchSlash(text, props.projectRoot);
       if (reply === "__CLEAR__") {
         setLines([{ role: "system", text: banner }]);
@@ -238,7 +252,7 @@ export function App(props: AppProps): React.ReactElement {
             key={i}
             role={l.role}
             text={l.text}
-            reasoning={l.reasoning}
+            reasoning={showThinking ? l.reasoning : undefined}
             header={l.header}
           />
         ))}

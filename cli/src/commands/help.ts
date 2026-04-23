@@ -3,6 +3,7 @@ export const HELP_COMMANDS: Array<{ name: string; description: string }> = [
   { name: "/init", description: "Scaffold a project agent in .agents/" },
   { name: "/agents", description: "List available agents" },
   { name: "/skills", description: "List built-in skills" },
+  { name: "/think", description: "Toggle the model's thinking panel" },
   { name: "/clear", description: "Clear the chat transcript" },
   { name: "/exit", description: "Exit the CLI" },
 ];
