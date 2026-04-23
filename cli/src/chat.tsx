@@ -15,13 +15,14 @@ export function ChatInput({ prompt, onSubmit }: ChatInputProps): React.ReactElem
   };
 
   return (
-    <box flexDirection="row" border="single" padding={1}>
+    <box flexDirection="row" border="single" padding={1} width="100%">
       <text fg="cyan">{prompt} </text>
       <input
         value={value}
         onChange={setValue}
         onSubmit={handleSubmit}
         focused
+        flexGrow={1}
       />
     </box>
   );
