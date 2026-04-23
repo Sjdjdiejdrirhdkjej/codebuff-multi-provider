@@ -132,6 +132,7 @@ export function App(props: AppProps): React.ReactElement {
     { role: "system", text: "Type /help for commands, /exit to quit." },
   ]);
   const [showThinking, setShowThinking] = useState(true);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
     if (props.initialPrompt) {
@@ -202,6 +203,7 @@ export function App(props: AppProps): React.ReactElement {
     let header = "";
     let body = "";
     let reasoning = "";
+    setIsLoading(true);
     const result = await streamToBackend(
       text,
       {
@@ -225,6 +227,7 @@ export function App(props: AppProps): React.ReactElement {
       },
     );
 
+    setIsLoading(false);
     if (!result.ok) {
       patchAgent({ text: `[error] ${result.error}`, header });
     } else if (!body && !reasoning) {
@@ -257,7 +260,28 @@ export function App(props: AppProps): React.ReactElement {
           />
         ))}
       </scrollbox>
+      {isLoading ? <Spinner /> : null}
       <ChatInput prompt={">"} onSubmit={handleSubmit} />
+    </box>
+  );
+}
+
+const SPINNER_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+function Spinner(): React.ReactElement {
+  const [frame, setFrame] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => {
+      setFrame((f) => (f + 1) % SPINNER_FRAMES.length);
+    }, 80);
+    return () => clearInterval(id);
+  }, []);
+  return (
+    <box flexDirection="row" paddingLeft={1}>
+      <text fg="cyan" attributes={1}>
+        {SPINNER_FRAMES[frame]}
+      </text>
+      <text fg="cyan"> Working...</text>
     </box>
   );
 }
