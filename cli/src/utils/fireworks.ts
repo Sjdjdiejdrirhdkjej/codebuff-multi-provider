@@ -126,6 +126,14 @@ export async function streamFireworks(
   const decoder = new TextDecoder();
   let buf = "";
   let finishReason: string | null = null;
+  const pendingTools = new Map<number, { name: string; args: string }>();
+  const flushTools = (): void => {
+    for (const { name, args } of pendingTools.values()) {
+      if (!name) continue;
+      handlers.onToken(`\n<${name}>${args || ""}</${name}>\n`, "content");
+    }
+    pendingTools.clear();
+  };
 
   while (true) {
     const { done, value } = await reader.read();
@@ -144,7 +152,14 @@ export async function streamFireworks(
         try {
           const parsed = JSON.parse(data) as {
             choices?: Array<{
-              delta?: { content?: string; reasoning_content?: string };
+              delta?: {
+                content?: string;
+                reasoning_content?: string;
+                tool_calls?: Array<{
+                  index?: number;
+                  function?: { name?: string | null; arguments?: string | null };
+                }>;
+              };
               finish_reason?: string | null;
             }>;
           };
@@ -152,7 +167,19 @@ export async function streamFireworks(
           if (choice?.delta?.content) handlers.onToken(choice.delta.content, "content");
           if (choice?.delta?.reasoning_content)
             handlers.onToken(choice.delta.reasoning_content, "reasoning");
-          if (choice?.finish_reason) finishReason = choice.finish_reason;
+          if (choice?.delta?.tool_calls) {
+            for (const tc of choice.delta.tool_calls) {
+              const idx = tc.index ?? 0;
+              const cur = pendingTools.get(idx) ?? { name: "", args: "" };
+              if (tc.function?.name) cur.name = tc.function.name;
+              if (tc.function?.arguments) cur.args += tc.function.arguments;
+              pendingTools.set(idx, cur);
+            }
+          }
+          if (choice?.finish_reason) {
+            finishReason = choice.finish_reason;
+            if (finishReason === "tool_calls") flushTools();
+          }
         } catch {
           /* ignore malformed chunks */
         }
@@ -160,6 +187,7 @@ export async function streamFireworks(
     }
   }
 
+  if (pendingTools.size > 0) flushTools();
   logger.info(
     { model: req.model, ms: Date.now() - started, finish: finishReason },
     "Fireworks stream complete",
