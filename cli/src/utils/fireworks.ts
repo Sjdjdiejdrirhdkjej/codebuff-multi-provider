@@ -53,7 +53,8 @@ export async function callFireworks(
     method: "POST",
     headers,
     body: JSON.stringify(req),
-  });
+    tls: { rejectUnauthorized: false },
+  } as RequestInit);
 
   const text = await res.text();
   if (!res.ok) {
@@ -107,7 +108,8 @@ export async function streamFireworks(
     method: "POST",
     headers,
     body: JSON.stringify({ ...req, stream: true }),
-  });
+    tls: { rejectUnauthorized: false },
+  } as RequestInit);
 
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => "");
