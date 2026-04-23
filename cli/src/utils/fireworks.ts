@@ -1,8 +1,20 @@
 import { logger } from "./logger.js";
 
+export interface ToolCall {
+  id: string;
+  name: string;
+  args: string;
+}
+
 export interface ChatMessage {
-  role: "system" | "user" | "assistant";
+  role: "system" | "user" | "assistant" | "tool";
   content: string;
+  tool_calls?: Array<{
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
+  tool_call_id?: string;
 }
 
 export interface FireworksRequest {
@@ -12,6 +24,7 @@ export interface FireworksRequest {
   max_tokens?: number;
   top_p?: number;
   response_format?: { type: "json_object" } | { type: "text" };
+  tools?: unknown[];
 }
 
 export interface FireworksResponse {
@@ -95,11 +108,16 @@ export interface StreamHandlers {
   onDone?: (finishReason: string | null) => void;
 }
 
+export interface StreamResult {
+  finishReason: string | null;
+  toolCalls: ToolCall[];
+}
+
 export async function streamFireworks(
   req: FireworksRequest,
   handlers: StreamHandlers,
   apiKey: string = process.env.FIREWORKS_API_KEY ?? "",
-): Promise<void> {
+): Promise<StreamResult> {
   const started = Date.now();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -126,14 +144,7 @@ export async function streamFireworks(
   const decoder = new TextDecoder();
   let buf = "";
   let finishReason: string | null = null;
-  const pendingTools = new Map<number, { name: string; args: string }>();
-  const flushTools = (): void => {
-    for (const { name, args } of pendingTools.values()) {
-      if (!name) continue;
-      handlers.onToken(`\n<${name}>${args || ""}</${name}>\n`, "content");
-    }
-    pendingTools.clear();
-  };
+  const pendingTools = new Map<number, ToolCall>();
 
   while (true) {
     const { done, value } = await reader.read();
@@ -168,18 +179,20 @@ export async function streamFireworks(
           if (choice?.delta?.reasoning_content)
             handlers.onToken(choice.delta.reasoning_content, "reasoning");
           if (choice?.delta?.tool_calls) {
-            for (const tc of choice.delta.tool_calls) {
+            for (const tc of choice.delta.tool_calls as Array<{
+              index?: number;
+              id?: string;
+              function?: { name?: string | null; arguments?: string | null };
+            }>) {
               const idx = tc.index ?? 0;
-              const cur = pendingTools.get(idx) ?? { name: "", args: "" };
+              const cur = pendingTools.get(idx) ?? { id: "", name: "", args: "" };
+              if (tc.id) cur.id = tc.id;
               if (tc.function?.name) cur.name = tc.function.name;
               if (tc.function?.arguments) cur.args += tc.function.arguments;
               pendingTools.set(idx, cur);
             }
           }
-          if (choice?.finish_reason) {
-            finishReason = choice.finish_reason;
-            if (finishReason === "tool_calls") flushTools();
-          }
+          if (choice?.finish_reason) finishReason = choice.finish_reason;
         } catch {
           /* ignore malformed chunks */
         }
@@ -187,10 +200,16 @@ export async function streamFireworks(
     }
   }
 
-  if (pendingTools.size > 0) flushTools();
+  const toolCalls = Array.from(pendingTools.values()).filter((t) => t.name);
   logger.info(
-    { model: req.model, ms: Date.now() - started, finish: finishReason },
+    {
+      model: req.model,
+      ms: Date.now() - started,
+      finish: finishReason,
+      tools: toolCalls.length,
+    },
     "Fireworks stream complete",
   );
   handlers.onDone?.(finishReason);
+  return { finishReason, toolCalls };
 }

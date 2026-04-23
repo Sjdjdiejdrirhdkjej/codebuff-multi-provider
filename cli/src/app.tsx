@@ -6,9 +6,14 @@ import { runInit } from "./init/index.js";
 import { listAgents } from "./utils/local-agent-registry.js";
 import { listSkills } from "./utils/skill-registry.js";
 import { logger } from "./utils/logger.js";
-import { FireworksError, streamFireworks } from "./utils/fireworks.js";
+import {
+  ChatMessage,
+  FireworksError,
+  streamFireworks,
+} from "./utils/fireworks.js";
 import { route } from "./utils/router.js";
 import { getCliEnv } from "./utils/env.js";
+import { TOOL_DEFS, executeTool } from "./utils/tools.js";
 
 export type AppMode = "LITE" | "NORMAL" | "MAX" | "PLAN";
 
@@ -91,21 +96,55 @@ async function streamToBackend(
 
   onHeader("");
 
+  const messages: ChatMessage[] = [
+    { role: "system", content: decision.systemPrompt },
+    ...history.map<ChatMessage>((m) => ({ role: m.role, content: m.content })),
+    { role: "user", content: prompt },
+  ];
+
+  const MAX_ROUNDS = 5;
   try {
-    await streamFireworks(
-      {
-        model: decision.model,
-        messages: [
-          { role: "system", content: decision.systemPrompt },
-          ...history,
-          { role: "user", content: prompt },
-        ],
-        temperature: decision.temperature,
-        max_tokens: decision.maxTokens,
-      },
-      { onToken: (t, k) => onToken(t, k ?? "content") },
-      env.FIREWORKS_API_KEY,
-    );
+    for (let round = 0; round < MAX_ROUNDS; round++) {
+      const result = await streamFireworks(
+        {
+          model: decision.model,
+          messages,
+          temperature: decision.temperature,
+          max_tokens: decision.maxTokens,
+          tools: TOOL_DEFS,
+        },
+        { onToken: (t, k) => onToken(t, k ?? "content") },
+        env.FIREWORKS_API_KEY,
+      );
+
+      if (result.finishReason !== "tool_calls" || result.toolCalls.length === 0) {
+        return { ok: true };
+      }
+
+      messages.push({
+        role: "assistant",
+        content: "",
+        tool_calls: result.toolCalls.map((tc) => ({
+          id: tc.id,
+          type: "function",
+          function: { name: tc.name, arguments: tc.args || "{}" },
+        })),
+      });
+
+      for (const tc of result.toolCalls) {
+        onToken(`\n<${tc.name}>${tc.args || ""}</${tc.name}>\n`, "content");
+        const out = executeTool(tc.name, tc.args, ctx.projectRoot);
+        const preview =
+          out.length > 200 ? out.slice(0, 200).replace(/\n/g, " ") + "…" : out;
+        onToken(`→ ${preview}\n`, "content");
+        messages.push({
+          role: "tool",
+          tool_call_id: tc.id,
+          content: out,
+        });
+      }
+    }
+    onToken(`\n[stopped: hit ${MAX_ROUNDS}-round tool limit]\n`, "content");
     return { ok: true };
   } catch (err) {
     if (err instanceof FireworksError) {
