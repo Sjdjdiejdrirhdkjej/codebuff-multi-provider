@@ -22,12 +22,12 @@ args = "Start application"
 name = "Start application"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "bun start-cli"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "set -a && . ./.env && set +a && bun start-cli"
 
 [[ports]]
 localPort = 5000
