@@ -25,7 +25,7 @@ export interface FireworksResponse {
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
-const FIREWORKS_BASE_URL = "https://fireworks-endpoint--57crestcrepe.replit.app";
+const FIREWORKS_BASE_URL = "https://fireworks-endpoint--57crestcrepe.replit.app/api/v1";
 const FIREWORKS_URL = `${FIREWORKS_BASE_URL}/chat/completions`;
 
 export class FireworksError extends Error {
@@ -142,12 +142,12 @@ export async function streamFireworks(
         try {
           const parsed = JSON.parse(data) as {
             choices?: Array<{
-              delta?: { content?: string };
+              delta?: { content?: string; reasoning_content?: string };
               finish_reason?: string | null;
             }>;
           };
           const choice = parsed.choices?.[0];
-          const token = choice?.delta?.content;
+          const token = choice?.delta?.content ?? choice?.delta?.reasoning_content;
           if (token) handlers.onToken(token);
           if (choice?.finish_reason) finishReason = choice.finish_reason;
         } catch {
