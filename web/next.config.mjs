@@ -9,7 +9,7 @@ const withMDX = createMDX({
   },
 })
 
-const DEV_ALLOWED_ORIGINS = ['localhost', '127.0.0.1']
+const DEV_ALLOWED_ORIGINS = ['localhost', '127.0.0.1', '*.replit.dev', '*.replit.app', '*.repl.co']
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
