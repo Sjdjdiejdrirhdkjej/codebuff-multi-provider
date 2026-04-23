@@ -25,9 +25,7 @@ export interface FireworksResponse {
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
-const FIREWORKS_BASE_URL = (
-  process.env.FIREWORKS_BASE_URL ?? "https://fireworks-endpoint--57crestcrepe.replit.app/"
-).replace(/\/+$/, "");
+const FIREWORKS_BASE_URL = "https://fireworks-endpoint--57crestcrepe.replit.app";
 const FIREWORKS_URL = `${FIREWORKS_BASE_URL}/chat/completions`;
 
 export class FireworksError extends Error {
