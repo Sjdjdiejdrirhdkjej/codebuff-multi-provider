@@ -14,9 +14,7 @@ import { markRunningAgentsAsCancelled } from '../../utils/block-operations'
 import {
   getCountryCodeFromFreeModeError,
   getFreebuffGateErrorKind,
-  isOutOfCreditsError,
   isFreeModeUnavailableError,
-  OUT_OF_CREDITS_MESSAGE,
   FREE_MODE_UNAVAILABLE_MESSAGE,
 } from '../../utils/error-handling'
 import { formatElapsedTime } from '../../utils/format-elapsed-time'
@@ -31,7 +29,6 @@ import {
 import { createModeDividerMessage } from '../../utils/send-message-helpers'
 import { yieldToEventLoop } from '../../utils/yield-to-event-loop'
 import { invalidateActivityQuery } from '../use-activity-query'
-import { usageQueryKeys } from '../use-usage-query'
 
 import type {
   PendingAttachment,
@@ -382,14 +379,6 @@ export const handleRunCompletion = (params: {
 
   if (output.type === 'error') {
 
-    if (isOutOfCreditsError(output)) {
-      updater.setError(OUT_OF_CREDITS_MESSAGE)
-      useChatStore.getState().setInputMode('outOfCredits')
-      invalidateActivityQuery(usageQueryKeys.current())
-      finalizeAfterError()
-      return
-    }
-
     if (isFreeModeUnavailableError(output)) {
       updater.setError(FREE_MODE_UNAVAILABLE_MESSAGE)
       if (IS_FREEBUFF) {
@@ -415,7 +404,6 @@ export const handleRunCompletion = (params: {
     return
   }
 
-  invalidateActivityQuery(usageQueryKeys.current())
 
   finalizeQueueState({
     setStreamStatus,
@@ -438,9 +426,9 @@ export const handleRunCompletion = (params: {
     completionTime = formatElapsedTime(elapsedSeconds)
   }
 
+  void actualCredits
   updater.markComplete({
     ...(completionTime && { completionTime }),
-    ...(actualCredits !== undefined && { credits: actualCredits }),
     metadata: {
       runState,
     },
@@ -482,13 +470,6 @@ export const handleRunError = (params: {
     isQueuePausedRef,
   })
   timerController.stop('error')
-
-  if (isOutOfCreditsError(error)) {
-    updater.setError(OUT_OF_CREDITS_MESSAGE)
-    useChatStore.getState().setInputMode('outOfCredits')
-    invalidateActivityQuery(usageQueryKeys.current())
-    return
-  }
 
   if (isFreeModeUnavailableError(error)) {
     updater.setError(FREE_MODE_UNAVAILABLE_MESSAGE)

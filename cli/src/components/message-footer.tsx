@@ -1,17 +1,9 @@
-import { SUBSCRIPTION_DISPLAY_NAME } from '@codebuff/common/constants/subscription-plans'
-import { IS_FREEBUFF } from '../utils/constants'
-import { pluralize } from '@codebuff/common/util/string'
 import { TextAttributes } from '@opentui/core'
 import React, { useCallback, useMemo } from 'react'
 
 import { CopyButton } from './copy-button'
 import { ElapsedTimer } from './elapsed-timer'
 import { FeedbackIconButton } from './feedback-icon-button'
-import { useSubscriptionQuery } from '../hooks/use-subscription-query'
-import {
-  getBlockPercentRemaining,
-  isCoveredBySubscription,
-} from '../utils/subscription'
 import { useTheme } from '../hooks/use-theme'
 import {
   useFeedbackStore,
@@ -29,7 +21,6 @@ interface MessageFooterProps {
   isLoading: boolean
   isComplete?: boolean
   completionTime?: string
-  credits?: number
   timerStartTime: number | null
   onFeedback?: (messageId: string) => void
   onCloseFeedback?: () => void
@@ -42,14 +33,12 @@ export const MessageFooter: React.FC<MessageFooterProps> = ({
   isLoading,
   isComplete,
   completionTime,
-  credits,
   timerStartTime,
   onFeedback,
   onCloseFeedback,
 }) => {
   const theme = useTheme()
 
-  // Memoize selectors to prevent new function references on every render
   const selectIsFeedbackOpenMemo = useMemo(
     () => selectIsFeedbackOpenForMessage(messageId),
     [messageId],
@@ -91,7 +80,6 @@ export const MessageFooter: React.FC<MessageFooterProps> = ({
     onCloseFeedback?.()
   }, [canRequestFeedback, onCloseFeedback])
 
-  // Build text from content and text blocks for copy button
   const textToCopy = [
     content,
     ...(blocks || [])
@@ -102,7 +90,6 @@ export const MessageFooter: React.FC<MessageFooterProps> = ({
     .join('\n\n')
     .trim()
 
-  // Loading timer
   if (shouldShowLoadingTimer) {
     return (
       <text
@@ -122,14 +109,12 @@ export const MessageFooter: React.FC<MessageFooterProps> = ({
     )
   }
 
-  // Completion footer
   if (!shouldShowCompletionFooter) {
     return null
   }
 
   const footerItems: { key: string; node: React.ReactNode }[] = []
 
-  // Add copy button first if there's content to copy
   if (textToCopy.length > 0) {
     footerItems.push({
       key: 'copy',
@@ -161,12 +146,7 @@ export const MessageFooter: React.FC<MessageFooterProps> = ({
       ),
     })
   }
-  if (typeof credits === 'number' && credits > 0 && !IS_FREEBUFF) {
-    footerItems.push({
-      key: 'credits',
-      node: <CreditsOrSubscriptionIndicator credits={credits} />,
-    })
-  }
+
   if (shouldRenderFeedbackButton) {
     footerItems.push({
       key: 'feedback',
@@ -215,44 +195,5 @@ export const MessageFooter: React.FC<MessageFooterProps> = ({
         </React.Fragment>
       ))}
     </box>
-  )
-}
-
-const CreditsOrSubscriptionIndicator: React.FC<{ credits: number }> = ({ credits }) => {
-  const theme = useTheme()
-  const { data: subscriptionData } = useSubscriptionQuery({
-    refetchInterval: false,
-    refetchOnActivity: false,
-    pauseWhenIdle: false,
-  })
-
-  const blockPercentRemaining = useMemo(
-    () => getBlockPercentRemaining(subscriptionData),
-    [subscriptionData],
-  )
-
-  const showSubscriptionIndicator = isCoveredBySubscription(subscriptionData)
-
-  if (showSubscriptionIndicator) {
-    const label = (blockPercentRemaining ?? 0) < 20
-      ? `✓ ${SUBSCRIPTION_DISPLAY_NAME} (${blockPercentRemaining}% left)`
-      : `✓ ${SUBSCRIPTION_DISPLAY_NAME}`
-    return (
-      <text
-        attributes={TextAttributes.DIM}
-        style={{ wrapMode: 'none', fg: theme.success, marginTop: 0, marginBottom: 0 }}
-      >
-        {label}
-      </text>
-    )
-  }
-
-  return (
-    <text
-      attributes={TextAttributes.DIM}
-      style={{ wrapMode: 'none', fg: theme.secondary, marginTop: 0, marginBottom: 0 }}
-    >
-      {pluralize(credits, 'credit')}
-    </text>
   )
 }

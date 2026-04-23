@@ -67,7 +67,6 @@ export type ChatStoreState = {
   agentMode: AgentMode
   hasReceivedPlanResponse: boolean
   lastMessageMode: AgentMode | null
-  sessionCreditsUsed: number
   runState: RunState | null
   /** The currently active top banner, or null if none */
   activeTopBanner: TopBannerType
@@ -135,7 +134,6 @@ type ChatStoreActions = {
   toggleAgentMode: () => void
   setHasReceivedPlanResponse: (value: boolean) => void
   setLastMessageMode: (mode: AgentMode | null) => void
-  addSessionCredits: (credits: number) => void
   setRunState: (runState: RunState | null) => void
   setActiveTopBanner: (banner: TopBannerType) => void
   closeTopBanner: () => void
@@ -188,7 +186,6 @@ const initialState: ChatStoreState = {
   agentMode: IS_FREEBUFF ? ('LITE' as const) : loadModePreference(),
   hasReceivedPlanResponse: false,
   lastMessageMode: null,
-  sessionCreditsUsed: 0,
   runState: null,
   activeTopBanner: null,
   inputMode: 'default' as InputMode,
@@ -294,11 +291,6 @@ export const useChatStore = create<ChatStore>()(
     setLastMessageMode: (mode) =>
       set((state) => {
         state.lastMessageMode = mode
-      }),
-
-    addSessionCredits: (credits) =>
-      set((state) => {
-        state.sessionCreditsUsed += credits
       }),
 
     setRunState: (runState) =>
@@ -502,7 +494,6 @@ export const useChatStore = create<ChatStore>()(
         state.agentMode = initialState.agentMode
         state.hasReceivedPlanResponse = initialState.hasReceivedPlanResponse
         state.lastMessageMode = initialState.lastMessageMode
-        state.sessionCreditsUsed = initialState.sessionCreditsUsed
         state.runState = initialState.runState
           ? castDraft(initialState.runState)
           : null

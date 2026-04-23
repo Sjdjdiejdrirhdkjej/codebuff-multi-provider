@@ -11,19 +11,10 @@ export interface SlashCommand {
   label: string
   description: string
   aliases?: string[]
-  /**
-   * If true, this command can be invoked without a leading slash when the
-   * input matches the command id exactly (no arguments).
-   */
   implicitCommand?: boolean
-  /**
-   * If set, selecting this command inserts this text into the input field
-   * instead of executing a command. Useful for agent shortcuts.
-   */
   insertText?: string
 }
 
-// Generate mode commands from the AGENT_MODES constant (excluded in Freebuff)
 const MODE_COMMANDS: SlashCommand[] = IS_FREEBUFF
   ? []
   : AGENT_MODES.map((mode) => ({
@@ -34,10 +25,6 @@ const MODE_COMMANDS: SlashCommand[] = IS_FREEBUFF
 
 const FREEBUFF_REMOVED_COMMAND_IDS = new Set([
   'connect:claude',
-  'ads:enable',
-  'ads:disable',
-  'usage',
-  'subscribe',
   'agent:gpt-5',
   'image',
   'publish',
@@ -78,50 +65,11 @@ const ALL_SLASH_COMMANDS: SlashCommand[] = [
         },
       ]
     : []),
-
-  {
-    id: 'ads:enable',
-    label: 'ads:enable',
-    description: 'Enable contextual ads',
-  },
-  {
-    id: 'ads:disable',
-    label: 'ads:disable',
-    description: 'Disable contextual ads',
-  },
   {
     id: 'init',
     label: 'init',
     description: 'Create a starter knowledge.md file',
     implicitCommand: true,
-  },
-  // {
-  //   id: 'undo',
-  //   label: 'undo',
-  //   description: 'Undo the last change made by the assistant',
-  // },
-  // {
-  //   id: 'redo',
-  //   label: 'redo',
-  //   description: 'Redo the most recent undone change',
-  // },
-  {
-    id: 'usage',
-    label: 'usage',
-    description: 'View credits and subscription quota',
-    aliases: ['credits'],
-  },
-  {
-    id: 'add-credits',
-    label: 'add-credits',
-    description: 'Add 1000 credits to your account',
-    aliases: ['add:credits', 'add'],
-  },
-  {
-    id: 'subscribe',
-    label: 'subscribe',
-    description: 'Subscribe to get more usage',
-    aliases: ['strong', 'sub', 'buy-credits'],
   },
   {
     id: 'interview',
@@ -157,12 +105,6 @@ const ALL_SLASH_COMMANDS: SlashCommand[] = [
     description: 'Spawn the GPT-5 agent to help solve complex problems',
     insertText: '@GPT-5 Agent ',
   },
-  // {
-  //   id: 'agent:opus',
-  //   label: 'agent:opus',
-  //   description: 'Spawn the Opus agent to help solve any problem',
-  //   insertText: '@Opus Agent ',
-  // },
   {
     id: 'feedback',
     label: 'feedback',
@@ -181,11 +123,6 @@ const ALL_SLASH_COMMANDS: SlashCommand[] = [
     aliases: ['img', 'attach'],
   },
   ...MODE_COMMANDS,
-  // {
-  //   id: 'publish',
-  //   label: 'publish',
-  //   description: 'Publish agents to the agent store',
-  // },
   {
     id: 'theme:toggle',
     label: 'theme:toggle',
@@ -226,7 +163,6 @@ export const SLASHLESS_COMMAND_IDS = new Set(
   ),
 )
 
-/** Maximum description length for skill commands in the slash menu */
 const SKILL_MENU_DESCRIPTION_MAX_LENGTH = 50
 
 function truncateDescription(description: string): string {
@@ -236,10 +172,6 @@ function truncateDescription(description: string): string {
   return description.slice(0, SKILL_MENU_DESCRIPTION_MAX_LENGTH - 1) + '…'
 }
 
-/**
- * Returns SLASH_COMMANDS merged with skill commands.
- * Skills become slash commands that users can invoke directly.
- */
 export function getSlashCommandsWithSkills(skills: SkillsMap): SlashCommand[] {
   const skillCommands: SlashCommand[] = Object.values(skills).map((skill) => ({
     id: `skill:${skill.name}`,

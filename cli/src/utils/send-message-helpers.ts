@@ -121,7 +121,6 @@ export const markMessageComplete = (
   message: ChatMessage,
   options?: {
     completionTime?: string
-    credits?: number
     runState?: unknown
   },
 ): ChatMessage => {
@@ -133,7 +132,6 @@ export const markMessageComplete = (
     ...message,
     isComplete: true,
     ...(options?.completionTime ? { completionTime: options.completionTime } : {}),
-    ...(options?.credits !== undefined ? { credits: options.credits } : {}),
     metadata,
   }
 }

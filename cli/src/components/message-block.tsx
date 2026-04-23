@@ -37,7 +37,6 @@ interface MessageBlockProps {
   timestamp: string
   isComplete?: boolean
   completionTime?: string
-  credits?: number
   timerStartTime: number | null
   textColor?: ThemeColor
   timestampColor: string
@@ -121,7 +120,6 @@ export const MessageBlock = memo(({
   timestamp,
   isComplete,
   completionTime,
-  credits,
   timerStartTime,
   textColor,
   timestampColor,
@@ -160,7 +158,6 @@ export const MessageBlock = memo(({
       timestamp,
       isComplete,
       completionTime,
-      credits,
       timerStartTime,
       textColor,
       timestampColor,
@@ -335,7 +332,6 @@ export const MessageBlock = memo(({
           isLoading={isLoading}
           isComplete={isComplete}
           completionTime={completionTime}
-          credits={credits}
           timerStartTime={timerStartTime}
           onFeedback={onFeedback}
           onCloseFeedback={onCloseFeedback}

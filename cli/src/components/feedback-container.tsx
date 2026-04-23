@@ -49,11 +49,10 @@ export const FeedbackContainer: React.FC<FeedbackContainerProps> = ({
     })),
   )
 
-  const { messages, agentMode, sessionCreditsUsed } = useChatStore(
+  const { messages, agentMode } = useChatStore(
     useShallow((state) => ({
       messages: state.messages,
       agentMode: state.agentMode,
-      sessionCreditsUsed: state.sessionCreditsUsed,
     })),
   )
 
@@ -79,7 +78,6 @@ export const FeedbackContainer: React.FC<FeedbackContainerProps> = ({
       target,
       recentMessages,
       agentMode,
-      sessionCreditsUsed,
       errors,
       clientFeedbackId,
     })
@@ -141,7 +139,6 @@ export const FeedbackContainer: React.FC<FeedbackContainerProps> = ({
     errors,
     messages,
     agentMode,
-    sessionCreditsUsed,
     onExitFeedback,
   ])
 

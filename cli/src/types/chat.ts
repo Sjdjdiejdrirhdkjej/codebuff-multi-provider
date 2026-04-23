@@ -178,7 +178,6 @@ export type ChatMessage = {
   parentId?: string
   agent?: AgentMessage
   isCompletion?: boolean
-  credits?: number
   completionTime?: string
   isComplete?: boolean
   metadata?: ChatMessageMetadata

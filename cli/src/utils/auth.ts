@@ -20,7 +20,6 @@ const userSchema = z.object({
   authToken: z.string(),
   fingerprintId: z.string().optional(),
   fingerprintHash: z.string().optional(),
-  credits: z.number().optional(),
 })
 
 export type User = z.infer<typeof userSchema>

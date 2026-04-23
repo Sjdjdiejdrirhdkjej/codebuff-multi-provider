@@ -19,7 +19,6 @@ function toRecentMessageSummary(m: ChatMessage): RecentMessageSummary {
     type: m.variant,
     id: m.id,
     ...(m.completionTime != null && { completionTime: m.completionTime }),
-    ...(m.credits != null && { credits: m.credits }),
   }
 }
 
@@ -53,7 +52,6 @@ export interface BuildFeedbackPayloadParams {
   target: ChatMessage | null
   recentMessages: RecentMessageSummary[]
   agentMode: string | null
-  sessionCreditsUsed: number | null
   errors: Array<{ id: string; message: string }> | null
   clientFeedbackId: string
 }
@@ -68,7 +66,6 @@ export function buildFeedbackPayload(
     target,
     recentMessages,
     agentMode,
-    sessionCreditsUsed,
     errors,
     clientFeedbackId,
   } = params
@@ -94,9 +91,7 @@ export function buildFeedbackPayload(
     ...(target?.completionTime != null && target.completionTime !== '' && {
       completionTime: target.completionTime,
     }),
-    ...(target?.credits != null && { credits: target.credits }),
     ...(agentMode != null && agentMode !== '' && { agentMode }),
-    ...(sessionCreditsUsed != null && { sessionCreditsUsed }),
     ...(recentMessages.length > 0 && { recentMessages }),
     ...(truncatedErrors && truncatedErrors.length > 0 && { errors: truncatedErrors }),
   }

@@ -1,12 +1,7 @@
-import { env } from '@codebuff/common/env'
+import { IS_FREEBUFF } from './constants'
 
 import type { ChatMessage } from '../types/chat'
 
-import { IS_FREEBUFF } from './constants'
-
-const defaultAppUrl = env.NEXT_PUBLIC_CODEBUFF_APP_URL || 'https://codebuff.com'
-
-// Normalize unknown errors to a user-facing string.
 const extractErrorMessage = (error: unknown, fallback: string): string => {
   if (typeof error === 'string') {
     return error
@@ -21,22 +16,6 @@ const extractErrorMessage = (error: unknown, fallback: string): string => {
     }
   }
   return fallback
-}
-
-/**
- * Check if an error indicates the user is out of credits.
- * Standardized on statusCode === 402 for payment required detection.
- */
-export const isOutOfCreditsError = (error: unknown): boolean => {
-  if (
-    error &&
-    typeof error === 'object' &&
-    'statusCode' in error &&
-    (error as { statusCode: unknown }).statusCode === 402
-  ) {
-    return true
-  }
-  return false
 }
 
 /**
@@ -57,12 +36,6 @@ export const isFreeModeUnavailableError = (error: unknown): boolean => {
   return false
 }
 
-/**
- * Extract the detected countryCode off a free_mode_unavailable error, if the
- * server included one. Used to populate the country_blocked screen after the
- * chat-completions gate rejects a user whose session-level country check had
- * previously failed open (null country detection → admitted → now blocked).
- */
 export const getCountryCodeFromFreeModeError = (
   error: unknown,
 ): string | null => {
@@ -73,15 +46,6 @@ export const getCountryCodeFromFreeModeError = (
     : null
 }
 
-/**
- * Freebuff waiting-room gate errors returned by /api/v1/chat/completions.
- *
- * Contract (see docs/freebuff-waiting-room.md):
- *   - 428 `waiting_room_required`   — no session row exists; POST /session to join.
- *   - 429 `waiting_room_queued`     — row exists but still queued.
- *   - 409 `session_superseded`      — another CLI rotated our instance id.
- *   - 410 `session_expired`         — active session's expires_at has passed.
- */
 export type FreebuffGateErrorKind =
   | 'waiting_room_required'
   | 'waiting_room_queued'
@@ -106,8 +70,6 @@ export const getFreebuffGateErrorKind = (
   if (expected === undefined || statusCode !== expected) return null
   return errorCode as FreebuffGateErrorKind
 }
-
-export const OUT_OF_CREDITS_MESSAGE = `Out of credits. Please add credits at ${defaultAppUrl}/usage`
 
 export const FREE_MODE_UNAVAILABLE_MESSAGE = IS_FREEBUFF
   ? 'Freebuff is not available in your country.'

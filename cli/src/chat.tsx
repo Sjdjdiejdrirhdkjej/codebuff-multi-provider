@@ -11,16 +11,12 @@ import {
 } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 
-import { getAdsEnabled } from './commands/ads'
 import { routeUserPrompt, addBashMessageToHistory } from './commands/router'
-import { ChoiceAdBanner } from './components/choice-ad-banner'
 import { ChatInputBar } from './components/chat-input-bar'
 import { LoadPreviousButton } from './components/load-previous-button'
 import { ReviewScreen } from './components/review-screen'
 import { MessageWithAgents } from './components/message-with-agents'
-import { areCreditsRestored } from './components/out-of-credits-banner'
 import { PendingBashMessage } from './components/pending-bash-message'
-import { SessionEndedBanner } from './components/session-ended-banner'
 import { StatusBar } from './components/status-bar'
 import { TopBanner } from './components/top-banner'
 import { getSlashCommandsWithSkills } from './data/slash-commands'
@@ -35,15 +31,12 @@ import { useChatMessages } from './hooks/use-chat-messages'
 import { useChatState } from './hooks/use-chat-state'
 import { useChatStreaming } from './hooks/use-chat-streaming'
 import { useChatUI } from './hooks/use-chat-ui'
-import { useSubscriptionQuery } from './hooks/use-subscription-query'
 import { useClipboard } from './hooks/use-clipboard'
 import { useEvent } from './hooks/use-event'
-import { useGravityAd } from './hooks/use-gravity-ad'
 import { useInputHistory } from './hooks/use-input-history'
 import { usePublishMutation } from './hooks/use-publish-mutation'
 import { useSendMessage } from './hooks/use-send-message'
 import { useSuggestionEngine } from './hooks/use-suggestion-engine'
-import { useUsageMonitor } from './hooks/use-usage-monitor'
 import { WEBSITE_URL } from './login/constants'
 import { getProjectRoot } from './project-files'
 import { useChatHistoryStore } from './state/chat-history-store'
@@ -133,9 +126,6 @@ export const Chat = ({
   // Subscribe to ask_user bridge to trigger form display
   useAskUserBridge()
 
-  // Monitor usage data and auto-show banner when thresholds are crossed
-  useUsageMonitor()
-
   // Get chat state from extracted hook
   const {
     inputValue,
@@ -167,14 +157,6 @@ export const Chat = ({
   } = useChatState()
 
   const { statusMessage } = useClipboard()
-
-  // Fetch subscription data early - needed for session credits tracking and ad gating
-  const { data: subscriptionData } = useSubscriptionQuery({
-    refetchInterval: 60 * 1000,
-  })
-  const hasSubscription = subscriptionData?.hasSubscription ?? false
-
-  const { adData, recordImpression } = useGravityAd({ enabled: IS_FREEBUFF || !hasSubscription })
 
   // Set initial mode from CLI flag on mount
   useEffect(() => {
@@ -221,18 +203,10 @@ export const Chat = ({
   // Get loaded skills for slash commands
   const loadedSkills = useMemo(() => getLoadedSkills(), [])
 
-  // Filter slash commands based on current ads state - only show the option that changes state
-  // Hide both ads commands entirely for subscribers
-  // Also merge in skill commands
-  const filteredSlashCommands = useMemo(() => {
-    const adsEnabled = getAdsEnabled()
-    const allCommands = getSlashCommandsWithSkills(loadedSkills)
-    return allCommands.filter((cmd) => {
-      if (cmd.id === 'ads:enable') return !hasSubscription && !adsEnabled
-      if (cmd.id === 'ads:disable') return !hasSubscription && adsEnabled
-      return true
-    })
-  }, [inputValue, loadedSkills, hasSubscription]) // Re-evaluate when input changes (user may have just toggled)
+  const filteredSlashCommands = useMemo(
+    () => getSlashCommandsWithSkills(loadedSkills),
+    [loadedSkills],
+  )
 
   const {
     slashContext,
@@ -441,7 +415,6 @@ export const Chat = ({
     resumeQueue,
     continueChat,
     continueChatId,
-    subscriptionData,
   })
 
   sendMessageRef.current = sendMessage
@@ -1151,15 +1124,6 @@ export const Chat = ({
       onScrollUp: scrollUp,
       onScrollDown: scrollDown,
       onToggleAll: handleToggleAll,
-      onOpenBuyCredits: () => {
-        // If credits have been restored, just return to default mode
-        if (areCreditsRestored()) {
-          setInputMode('default')
-          return
-        }
-        // Otherwise open the buy credits page
-        safeOpen(WEBSITE_URL + '/usage')
-      },
     }),
     [
       setInputMode,
@@ -1300,26 +1264,6 @@ export const Chat = ({
   })
   const hasStatusIndicatorContent = statusIndicatorState.kind !== 'idle'
 
-  // Auto-show subscription limit banner when rate limit becomes active
-  const subscriptionLimitShownRef = useRef(false)
-  const subscriptionRateLimit = subscriptionData?.hasSubscription ? subscriptionData.rateLimit : undefined
-  const fallbackToALaCarte = subscriptionData?.fallbackToALaCarte ?? false
-  useEffect(() => {
-    const isLimited = subscriptionRateLimit?.limited === true
-    if (isLimited && !subscriptionLimitShownRef.current) {
-      subscriptionLimitShownRef.current = true
-      // Skip showing the banner if user prefers to always fall back to a-la-carte
-      if (!fallbackToALaCarte) {
-        useChatStore.getState().setInputMode('subscriptionLimit')
-      }
-    } else if (!isLimited) {
-      subscriptionLimitShownRef.current = false
-      if (useChatStore.getState().inputMode === 'subscriptionLimit') {
-        useChatStore.getState().setInputMode('default')
-      }
-    }
-  }, [subscriptionRateLimit?.limited, fallbackToALaCarte])
-
   const inputBoxTitle = useMemo(() => {
     const segments: string[] = []
 
@@ -1459,13 +1403,6 @@ export const Chat = ({
           />
         )}
 
-        {adData && (IS_FREEBUFF || getAdsEnabled()) && (
-          <ChoiceAdBanner
-            ads={adData.variant === 'choice' ? adData.ads : [adData.ad]}
-            onImpression={recordImpression}
-          />
-        )}
-
         {reviewMode ? (
           // Review and ask_user take precedence over the session-ended banner:
           // during the grace window the agent may still be asking to run tools
@@ -1476,10 +1413,6 @@ export const Chat = ({
             onSelectOption={handleReviewOptionSelect}
             onCustom={handleReviewCustom}
             onCancel={handleCloseReviewScreen}
-          />
-        ) : isFreebuffSessionOver && !askUserState ? (
-          <SessionEndedBanner
-            isStreaming={isStreaming || isWaitingForResponse}
           />
         ) : (
           <ChatInputBar
