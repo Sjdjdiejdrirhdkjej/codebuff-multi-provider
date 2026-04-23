@@ -89,8 +89,7 @@ async function streamToBackend(
     "Routed prompt (streaming)",
   );
 
-  const tag = decision.model.endsWith("glm-5p1") ? "GLM-5.1" : "Kimi K2.6";
-  onHeader(`[${tag} · ${decision.reason}]`);
+  onHeader("");
 
   try {
     await streamFireworks(
