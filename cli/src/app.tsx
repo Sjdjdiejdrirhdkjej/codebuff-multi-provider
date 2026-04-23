@@ -6,6 +6,9 @@ import { runInit } from "./init/index.js";
 import { listAgents } from "./utils/local-agent-registry.js";
 import { listSkills } from "./utils/skill-registry.js";
 import { logger } from "./utils/logger.js";
+import { callFireworks, FireworksError } from "./utils/fireworks.js";
+import { route } from "./utils/router.js";
+import { getCliEnv } from "./utils/env.js";
 
 export type AppMode = "LITE" | "NORMAL" | "MAX" | "PLAN";
 
@@ -68,16 +71,45 @@ function dispatchSlash(
 async function sendToBackend(
   prompt: string,
   ctx: { projectRoot: string; agentId: string | null; mode: AppMode },
+  history: Array<{ role: "user" | "assistant"; content: string }> = [],
 ): Promise<string> {
-  // Real flow: call the Codebuff web API via @codebuff/sdk and stream the
-  // agent's actions and code edits. That backend is not available in this
-  // environment, so we surface a clear placeholder response.
-  logger.info({ prompt, ctx }, "Would send prompt to Codebuff backend");
-  return [
-    `[stub] Would dispatch to ${ctx.agentId ?? "default"} agent in ${ctx.mode} mode.`,
-    `Project root: ${ctx.projectRoot}`,
-    `Prompt: ${prompt}`,
-  ].join("\n");
+  const env = getCliEnv();
+  if (!env.FIREWORKS_API_KEY) {
+    return "[error] FIREWORKS_API_KEY is not set. Add it to your environment to enable the AI backend.";
+  }
+
+  const decision = route(prompt, {
+    mode: ctx.mode,
+    contextChars: history.reduce((n, m) => n + m.content.length, 0) + prompt.length,
+  });
+  logger.info(
+    { model: decision.model, reason: decision.reason, mode: ctx.mode },
+    "Routed prompt",
+  );
+
+  try {
+    const res = await callFireworks(
+      {
+        model: decision.model,
+        messages: [
+          { role: "system", content: decision.systemPrompt },
+          ...history,
+          { role: "user", content: prompt },
+        ],
+        temperature: decision.temperature,
+        max_tokens: decision.maxTokens,
+      },
+      env.FIREWORKS_API_KEY,
+    );
+    const reply = res.choices?.[0]?.message?.content ?? "(empty response)";
+    const tag = decision.model.endsWith("glm-5p1") ? "GLM-5.1" : "Kimi K2.6";
+    return `[${tag} · ${decision.reason}]\n${reply}`;
+  } catch (err) {
+    if (err instanceof FireworksError) {
+      return `[Fireworks error ${err.status ?? ""}] ${err.message}`;
+    }
+    return `[error] ${(err as Error).message}`;
+  }
 }
 
 export function App(props: AppProps): React.ReactElement {
@@ -122,11 +154,21 @@ export function App(props: AppProps): React.ReactElement {
     }
 
     setLines((prev) => [...prev, { role: "user", text }]);
-    const reply = await sendToBackend(text, {
-      projectRoot: props.projectRoot,
-      agentId: props.agentId,
-      mode: props.initialMode,
-    });
+    const history = lines
+      .filter((l) => l.role === "user" || l.role === "agent")
+      .map((l) => ({
+        role: l.role === "user" ? ("user" as const) : ("assistant" as const),
+        content: l.text,
+      }));
+    const reply = await sendToBackend(
+      text,
+      {
+        projectRoot: props.projectRoot,
+        agentId: props.agentId,
+        mode: props.initialMode,
+      },
+      history,
+    );
     setLines((prev) => [...prev, { role: "agent", text: reply }]);
   }
 
