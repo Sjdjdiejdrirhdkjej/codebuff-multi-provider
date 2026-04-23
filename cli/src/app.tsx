@@ -6,7 +6,7 @@ import { runInit } from "./init/index.js";
 import { listAgents } from "./utils/local-agent-registry.js";
 import { listSkills } from "./utils/skill-registry.js";
 import { logger } from "./utils/logger.js";
-import { callFireworks, FireworksError } from "./utils/fireworks.js";
+import { FireworksError, streamFireworks } from "./utils/fireworks.js";
 import { route } from "./utils/router.js";
 import { getCliEnv } from "./utils/env.js";
 
@@ -68,27 +68,37 @@ function dispatchSlash(
   }
 }
 
-async function sendToBackend(
+async function streamToBackend(
   prompt: string,
   ctx: { projectRoot: string; agentId: string | null; mode: AppMode },
-  history: Array<{ role: "user" | "assistant"; content: string }> = [],
-): Promise<string> {
+  history: Array<{ role: "user" | "assistant"; content: string }>,
+  onHeader: (header: string) => void,
+  onToken: (token: string) => void,
+): Promise<{ ok: boolean; error?: string }> {
   const env = getCliEnv();
   if (!env.FIREWORKS_API_KEY) {
-    return "[error] FIREWORKS_API_KEY is not set. Add it to your environment to enable the AI backend.";
+    return {
+      ok: false,
+      error:
+        "FIREWORKS_API_KEY is not set. Add it to your environment to enable the AI backend.",
+    };
   }
 
   const decision = route(prompt, {
     mode: ctx.mode,
-    contextChars: history.reduce((n, m) => n + m.content.length, 0) + prompt.length,
+    contextChars:
+      history.reduce((n, m) => n + m.content.length, 0) + prompt.length,
   });
   logger.info(
     { model: decision.model, reason: decision.reason, mode: ctx.mode },
-    "Routed prompt",
+    "Routed prompt (streaming)",
   );
 
+  const tag = decision.model.endsWith("glm-5p1") ? "GLM-5.1" : "Kimi K2.6";
+  onHeader(`[${tag} · ${decision.reason}]`);
+
   try {
-    const res = await callFireworks(
+    await streamFireworks(
       {
         model: decision.model,
         messages: [
@@ -99,16 +109,15 @@ async function sendToBackend(
         temperature: decision.temperature,
         max_tokens: decision.maxTokens,
       },
+      { onToken },
       env.FIREWORKS_API_KEY,
     );
-    const reply = res.choices?.[0]?.message?.content ?? "(empty response)";
-    const tag = decision.model.endsWith("glm-5p1") ? "GLM-5.1" : "Kimi K2.6";
-    return `[${tag} · ${decision.reason}]\n${reply}`;
+    return { ok: true };
   } catch (err) {
     if (err instanceof FireworksError) {
-      return `[Fireworks error ${err.status ?? ""}] ${err.message}`;
+      return { ok: false, error: `Fireworks ${err.status ?? ""}: ${err.message}` };
     }
-    return `[error] ${(err as Error).message}`;
+    return { ok: false, error: (err as Error).message };
   }
 }
 
@@ -153,14 +162,37 @@ export function App(props: AppProps): React.ReactElement {
       return;
     }
 
-    setLines((prev) => [...prev, { role: "user", text }]);
     const history = lines
       .filter((l) => l.role === "user" || l.role === "agent")
       .map((l) => ({
         role: l.role === "user" ? ("user" as const) : ("assistant" as const),
         content: l.text,
       }));
-    const reply = await sendToBackend(
+
+    // Append the user line plus a placeholder agent line; we'll mutate the
+    // agent line as tokens arrive.
+    let agentIdx = -1;
+    setLines((prev) => {
+      agentIdx = prev.length + 1;
+      return [
+        ...prev,
+        { role: "user", text },
+        { role: "agent", text: "…" },
+      ];
+    });
+
+    const updateAgent = (next: string): void => {
+      setLines((prev) => {
+        if (agentIdx < 0 || agentIdx >= prev.length) return prev;
+        const copy = prev.slice();
+        copy[agentIdx] = { role: "agent", text: next };
+        return copy;
+      });
+    };
+
+    let header = "";
+    let body = "";
+    const result = await streamToBackend(
       text,
       {
         projectRoot: props.projectRoot,
@@ -168,8 +200,21 @@ export function App(props: AppProps): React.ReactElement {
         mode: props.initialMode,
       },
       history,
+      (h) => {
+        header = h;
+        updateAgent(`${header}\n`);
+      },
+      (token) => {
+        body += token;
+        updateAgent(`${header}\n${body}`);
+      },
     );
-    setLines((prev) => [...prev, { role: "agent", text: reply }]);
+
+    if (!result.ok) {
+      updateAgent(`[error] ${result.error}`);
+    } else if (!body) {
+      updateAgent(`${header}\n(empty response)`);
+    }
   }
 
   return (
