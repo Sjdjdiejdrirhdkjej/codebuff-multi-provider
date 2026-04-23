@@ -1,3 +1,0 @@
-#!/usr/bin/env bun
-// CLI binary shim — invokes the TUI entry point.
-import("../src/index.tsx");
