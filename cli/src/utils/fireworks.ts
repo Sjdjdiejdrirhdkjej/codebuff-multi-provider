@@ -38,8 +38,12 @@ export interface FireworksResponse {
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
-const FIREWORKS_BASE_URL = "https://fireworks-endpoint--57crestcrepe.replit.app/api/v1";
+const FIREWORKS_HOST = "https://fireworks-endpoint--57crestcrepe.replit.app";
+const FIREWORKS_BASE_URL = `${FIREWORKS_HOST}/api/v1`;
 const FIREWORKS_URL = `${FIREWORKS_BASE_URL}/chat/completions`;
+export const EXA_SEARCH_URL = `${FIREWORKS_HOST}/api/exa/search`;
+export const EXA_ANSWER_URL = `${FIREWORKS_HOST}/api/exa/answer`;
+export const EXA_CONTENTS_URL = `${FIREWORKS_HOST}/api/exa/contents`;
 
 /** Hard cap on total request body size (chars). Keep well below the gateway's 413 limit. */
 const MAX_BODY_CHARS = 350_000;

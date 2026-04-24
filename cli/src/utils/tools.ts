@@ -9,8 +9,12 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { callFireworks, type ChatMessage } from "./fireworks.js";
-import { MODEL_KIMI_K2_6 } from "./router.js";
+import {
+  EXA_ANSWER_URL,
+  EXA_CONTENTS_URL,
+  EXA_SEARCH_URL,
+  type ChatMessage,
+} from "./fireworks.js";
 
 export const VISIBLE_TOOLS = new Set<string>([
   "write_file",
@@ -691,23 +695,42 @@ export async function executeTool(
       const query = String(args.query ?? "").trim();
       const depth = String(args.depth ?? "standard");
       if (!query) return `error: web_search requires a non-empty 'query' argument`;
+      const numResults = depth === "deep" ? 10 : 6;
       try {
-        const res = await callFireworks({
-          model: MODEL_KIMI_K2_6,
-          messages: [
-            {
-              role: "system",
-              content: `You are a web research assistant. For the user's query, produce up to 8 concise, factual result snippets as if from a search engine. Output as a numbered list. Each item: a one-line title, a 1-2 sentence snippet, and a plausible source URL on its own line. Be accurate and avoid fabricating specific URLs when uncertain — prefer well-known canonical domains. Depth: ${depth}.`,
-            },
-            { role: "user", content: `Search query: ${query}` },
-          ],
-          temperature: 0.3,
-          max_tokens: 1500,
+        const res = await fetch(EXA_SEARCH_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            query,
+            numResults,
+            type: depth === "deep" ? "neural" : "auto",
+            contents: { text: { maxCharacters: 1200 } },
+          }),
         });
-        const out = res.choices?.[0]?.message?.content;
-        return typeof out === "string" && out.trim()
-          ? out
-          : `error: web_search returned no content`;
+        const text = await res.text();
+        if (!res.ok) {
+          return `error: web_search HTTP ${res.status}: ${text.slice(0, 300)}`;
+        }
+        let parsed: any;
+        try {
+          parsed = JSON.parse(text);
+        } catch {
+          return `error: web_search returned non-JSON: ${text.slice(0, 300)}`;
+        }
+        const results: any[] = Array.isArray(parsed?.results) ? parsed.results : [];
+        if (results.length === 0) return `No results for "${query}".`;
+        const lines: string[] = [`Search results for "${query}" (${results.length}):`, ""];
+        results.forEach((r, i) => {
+          const title = String(r.title ?? r.id ?? "(untitled)").trim();
+          const url = String(r.url ?? r.id ?? "").trim();
+          const snippet = String(r.text ?? r.snippet ?? "").replace(/\s+/g, " ").trim().slice(0, 400);
+          const date = r.publishedDate ? ` (${String(r.publishedDate).slice(0, 10)})` : "";
+          lines.push(`${i + 1}. ${title}${date}`);
+          if (url) lines.push(`   ${url}`);
+          if (snippet) lines.push(`   ${snippet}`);
+          lines.push("");
+        });
+        return lines.join("\n").trim();
       } catch (err) {
         return `error: web_search failed: ${err instanceof Error ? err.message : String(err)}`;
       }
@@ -717,28 +740,55 @@ export async function executeTool(
       const query = String(args.query ?? "").trim();
       if (!library || !query)
         return `error: read_docs requires both 'library' and 'query' arguments`;
+      const fullQuery = `${library} documentation: ${query}`;
       try {
-        const res = await callFireworks({
-          model: MODEL_KIMI_K2_6,
-          messages: [
-            {
-              role: "system",
-              content: `You are a technical documentation lookup assistant. Given a library/framework and a question, return the most relevant documentation excerpt(s): API signatures, configuration keys, code examples, and short prose explanations. Quote canonical names and exact option names. If you are not confident about specifics, say so explicitly rather than guessing.`,
-            },
-            {
-              role: "user",
-              content: `Library: ${library}\nQuestion: ${query}`,
-            },
-          ],
-          temperature: 0.2,
-          max_tokens: 2000,
+        const ansRes = await fetch(EXA_ANSWER_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ query: fullQuery, text: true }),
         });
-        const out = res.choices?.[0]?.message?.content;
-        return typeof out === "string" && out.trim()
-          ? out
-          : `error: read_docs returned no content`;
+        const ansText = await ansRes.text();
+        if (!ansRes.ok) {
+          return `error: read_docs HTTP ${ansRes.status}: ${ansText.slice(0, 300)}`;
+        }
+        let parsed: any;
+        try {
+          parsed = JSON.parse(ansText);
+        } catch {
+          return `error: read_docs returned non-JSON: ${ansText.slice(0, 300)}`;
+        }
+        const answer = String(parsed?.answer ?? "").trim();
+        const citations: any[] = Array.isArray(parsed?.citations) ? parsed.citations : [];
+        const out: string[] = [`# ${library} — ${query}`, ""];
+        if (answer) out.push(answer, "");
+        if (citations.length > 0) {
+          out.push("## Sources");
+          citations.slice(0, 8).forEach((c, i) => {
+            const title = String(c.title ?? c.id ?? "(source)").trim();
+            const url = String(c.url ?? c.id ?? "").trim();
+            out.push(`${i + 1}. ${title}${url ? ` — ${url}` : ""}`);
+          });
+        }
+        const result = out.join("\n").trim();
+        return result || `No documentation answer found for ${library}: ${query}`;
       } catch (err) {
         return `error: read_docs failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
+    }
+    if (name === "fetch_url_contents") {
+      const url = String(args.url ?? "").trim();
+      if (!url) return `error: fetch_url_contents requires a 'url' argument`;
+      try {
+        const res = await fetch(EXA_CONTENTS_URL, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ urls: [url], text: { maxCharacters: 8000 } }),
+        });
+        const text = await res.text();
+        if (!res.ok) return `error: fetch_url_contents HTTP ${res.status}: ${text.slice(0, 300)}`;
+        return text;
+      } catch (err) {
+        return `error: fetch_url_contents failed: ${err instanceof Error ? err.message : String(err)}`;
       }
     }
     if (name === "ask_user") {
