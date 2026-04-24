@@ -95,6 +95,7 @@ async function streamToBackend(
   history: Array<{ role: "user" | "assistant"; content: string }>,
   onHeader: (header: string) => void,
   onToken: (token: string, kind: "content" | "reasoning") => void,
+  onNewRound: () => void,
 ): Promise<{ ok: boolean; error?: string }> {
   const env = getCliEnv();
 
@@ -137,7 +138,10 @@ async function streamToBackend(
   ];
 
   try {
+    let round = 0;
     for (;;) {
+      if (round > 0) onNewRound();
+      round++;
       const result = await streamFireworks(
         {
           model,
@@ -310,6 +314,21 @@ export function App(props: AppProps): React.ReactElement {
     let body = "";
     let reasoning = "";
     setIsLoading(true);
+
+    const startNewRound = (): void => {
+      // Snapshot the current bubble and create a fresh one for the next round.
+      body = "";
+      reasoning = "";
+      header = "";
+      setLines((prev) => {
+        agentIdx = prev.length;
+        return [
+          ...prev,
+          { role: "agent", text: "", reasoning: "", header: "thinking…" },
+        ];
+      });
+    };
+
     const result = await streamToBackend(
       text,
       {
@@ -331,6 +350,7 @@ export function App(props: AppProps): React.ReactElement {
           patchAgent({ text: body });
         }
       },
+      startNewRound,
     );
 
     setIsLoading(false);
