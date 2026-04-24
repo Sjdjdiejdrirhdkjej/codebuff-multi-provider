@@ -344,24 +344,28 @@ ${buildArray(
     outputMode: "last_message",
     includeMessageHistory: true,
     toolNames: buildArray(
+      // Delegation tools come first and are the primary way Buffy works.
       "spawn_agents",
-      "read_files",
-      "read_subtree",
+      "spawn_agent_inline",
+      // Orchestration / meta tools.
       !isFast && "write_todos",
       !isFast && !noAskUser && "suggest_followups",
-      "str_replace",
-      "write_file",
-      !isFree && "propose_str_replace",
-      !isFree && "propose_write_file",
       !noAskUser && "ask_user",
       "skill",
       "set_output",
-      "list_directory",
-      "glob",
-      "code_search",
-      "run_terminal_command",
       "think_deeply",
       "end_turn",
+      // Light orientation reads — kept for cheap one-shots only.
+      "read_files",
+      "read_subtree",
+      "list_directory",
+      "glob",
+      // NOTE: code_search, run_terminal_command, str_replace, and write_file
+      // are intentionally OMITTED from base2. Each has a dedicated subagent
+      // (code-searcher, basher, editor). Forcing delegation through tool
+      // availability is far more effective than prompt nagging.
+      isFree && "str_replace",
+      isFree && "write_file",
     ),
     spawnableAgents: buildArray(
       !isMax && "file-picker",

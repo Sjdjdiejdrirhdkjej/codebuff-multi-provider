@@ -210,7 +210,7 @@ export const TOOL_DEFS: ToolDef[] = [
     function: {
       name: "spawn_agents",
       description:
-        "Spawn one or more sub-agents in parallel. Each agent runs its own LLM loop with its restricted tool set and returns a result. Use to delegate context-gathering, editing, reviewing, research, etc.",
+        "PRIMARY TOOL: Spawn one or more specialized sub-agents in parallel to do work for you. This is the main way an orchestrator agent gets things done — strongly prefer it over doing work inline. Each entry in the agents array runs its own LLM loop in parallel with its restricted tool set and returns a result. Always batch independent work into a single spawn_agents call (e.g. 3 file-pickers + 2 code-searchers + 1 web-researcher in one call) instead of multiple sequential calls. Typical uses: context gathering (file-picker, code-searcher, researcher-web, researcher-docs), editing (editor / editor-gpt-5), review (code-reviewer / code-reviewer-lite), validation (basher for typecheck and tests in parallel), deep thinking (thinker). When in doubt, spawn.",
       parameters: {
         type: "object",
         properties: {
