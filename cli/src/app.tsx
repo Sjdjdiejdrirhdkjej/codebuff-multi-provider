@@ -131,11 +131,7 @@ async function streamToBackend(
       });
 
       for (const tc of result.toolCalls) {
-        onToken(`\n<${tc.name}>${tc.args || ""}</${tc.name}>\n`, "content");
         const out = executeTool(tc.name, tc.args, ctx.projectRoot);
-        const preview =
-          out.length > 200 ? out.slice(0, 200).replace(/\n/g, " ") + "…" : out;
-        onToken(`→ ${preview}\n`, "content");
         messages.push({
           role: "tool",
           tool_call_id: tc.id,
