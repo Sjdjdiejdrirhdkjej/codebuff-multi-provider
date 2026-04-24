@@ -1,4 +1,21 @@
+import { existsSync, readFileSync } from "node:fs";
 import { logger } from "./logger.js";
+
+// The Replit environment uses an internal proxy with a private Root CA that is
+// not in Bun's or Node.js's built-in trust stores. We load the system CA bundle
+// (which Replit pre-populates with its proxy Root CA) so both runtimes can
+// verify the certificate chain properly.
+const SYSTEM_CA_BUNDLE_PATH = "/etc/ssl/certs/ca-certificates.crt";
+const SYSTEM_CA_BUNDLE: string | null = existsSync(SYSTEM_CA_BUNDLE_PATH)
+  ? readFileSync(SYSTEM_CA_BUNDLE_PATH, "utf8")
+  : null;
+
+// For Node.js, NODE_EXTRA_CA_CERTS must be set before the TLS module initialises
+// (i.e. before the first HTTPS connection). Setting it here at module load time
+// is early enough.
+if (SYSTEM_CA_BUNDLE_PATH && existsSync(SYSTEM_CA_BUNDLE_PATH) && !process.env.NODE_EXTRA_CA_CERTS) {
+  process.env.NODE_EXTRA_CA_CERTS = SYSTEM_CA_BUNDLE_PATH;
+}
 
 export interface ToolCall {
   id: string;
@@ -131,7 +148,9 @@ export class FireworksError extends Error {
  */
 function secureFetch(url: string, init: RequestInit): Promise<Response> {
   if (typeof Bun !== "undefined") {
-    return fetch(url, { ...init, tls: { rejectUnauthorized: true } } as RequestInit);
+    const tls: Record<string, unknown> = { rejectUnauthorized: true };
+    if (SYSTEM_CA_BUNDLE) tls.ca = SYSTEM_CA_BUNDLE;
+    return fetch(url, { ...init, tls } as RequestInit);
   }
   return fetch(url, init);
 }
