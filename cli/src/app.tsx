@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { useKeyboard } from "@opentui/react";
+import type { BoxRenderable } from "@opentui/core";
 
 import { ChatInput } from "./chat.js";
 import { HELP_COMMANDS, renderHelp } from "./commands/help.js";
@@ -337,19 +338,67 @@ export function App(props: AppProps): React.ReactElement {
         (props.agentId ? `  agent: ${props.agentId}` : `  agent: ${MODE_TO_AGENT[props.initialMode]}`) +
         (props.conversationId ? `  continuing: ${props.conversationId}` : ""),
     },
-    { role: "system", text: "Type /help for commands, /agents to list agents, /exit to quit. Press Ctrl+T to expand/collapse spawned-agent details." },
+    { role: "system", text: "Type /help for commands, /agents to list, /exit to quit. Tap /x to expand all tool details, or /x N to expand the Nth tool in the latest reply (Ctrl+T also toggles all)." },
   ]);
   const [showThinking, setShowThinking] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [expandTools, setExpandTools] = useState(false);
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
   const [mode, setMode] = useState<AppMode>(props.initialMode);
 
-  // Press Ctrl+T to toggle expand/collapse for all spawn-agents cards.
+  const toggleExpanded = (id: string): void => {
+    setExpandedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // Ctrl+T expands/collapses all spawn-agents cards (desktop shortcut).
   useKeyboard((event: { name?: string; sequence?: string; ctrl?: boolean; meta?: boolean }) => {
     if (!event.ctrl) return;
     const k = event.name ?? event.sequence ?? "";
     if (k === "t" || k === "T" || k === "\u0014") setExpandTools((v) => !v);
   });
+
+  // Mobile-friendly toggle: `/x` toggles all, `/x N` toggles the Nth tool/spawn
+  // in the most recent agent message. Targets the latest agent message that has
+  // tool/spawn segments.
+  const handleExpandCommand = (arg: string | undefined): string => {
+    if (!arg) {
+      setExpandTools((v) => !v);
+      return `Tools ${expandTools ? "collapsed" : "expanded"}.`;
+    }
+    const target = parseInt(arg, 10);
+    if (!Number.isFinite(target) || target < 1) {
+      return "Usage: /x [N]   — N is a tool number from the latest message.";
+    }
+    let agentIdx = -1;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (lines[i].role === "agent" && lines[i].text) {
+        const segs = parseSegments(lines[i].text);
+        if (segs.some((s) => s.kind === "tool" || s.kind === "spawn")) {
+          agentIdx = i;
+          break;
+        }
+      }
+    }
+    if (agentIdx < 0) return "No tool calls in the recent messages to expand.";
+    const segs = parseSegments(lines[agentIdx].text);
+    let n = 0;
+    for (let i = 0; i < segs.length; i++) {
+      if (segs[i].kind === "tool" || segs[i].kind === "spawn") {
+        n += 1;
+        if (n === target) {
+          const id = `${agentIdx}:${i}`;
+          toggleExpanded(id);
+          return `Toggled [${target}].`;
+        }
+      }
+    }
+    return `No tool [${target}] in the latest message.`;
+  };
 
   useEffect(() => {
     if (props.initialPrompt) {
@@ -372,6 +421,16 @@ export function App(props: AppProps): React.ReactElement {
             role: "system",
             text: `thinking panel ${showThinking ? "hidden" : "shown"}.`,
           },
+        ]);
+        return;
+      }
+      if (cmd === "x" || cmd === "expand") {
+        const arg = normalized.slice(1).split(/\s+/)[1];
+        const reply = handleExpandCommand(arg);
+        setLines((prev) => [
+          ...prev,
+          { role: "user", text },
+          { role: "system", text: reply },
         ]);
         return;
       }
@@ -542,6 +601,9 @@ export function App(props: AppProps): React.ReactElement {
             reasoning={showThinking ? l.reasoning : undefined}
             header={l.header}
             expandTools={expandTools}
+            msgIdx={i}
+            expandedIds={expandedIds}
+            onToggle={toggleExpanded}
           />
         ))}
       </scrollbox>
@@ -577,6 +639,47 @@ interface CardProps {
   reasoning?: string;
   header?: string;
   expandTools?: boolean;
+  msgIdx?: number;
+  expandedIds?: Set<string>;
+  onToggle?: (id: string) => void;
+}
+
+// Renderable-level mouse handler: assigns onMouseDown via ref so the box
+// behaves as a real clickable region in terminals that support mouse mode.
+// Also accepts an optional badge to display before the children for tap-by-
+// number access on devices without working mouse support.
+function ClickableBox({
+  onClick,
+  children,
+  ...rest
+}: {
+  onClick: () => void;
+  children: React.ReactNode;
+} & Record<string, unknown>): React.ReactElement {
+  const ref = useRef<BoxRenderable | null>(null);
+  const handlerRef = useRef(onClick);
+  handlerRef.current = onClick;
+
+  useEffect(() => {
+    const node = ref.current as unknown as {
+      onMouseDown?: (e: { button?: number }) => void;
+    } | null;
+    if (!node) return;
+    node.onMouseDown = (e) => {
+      // Left button (0) only — middle/right shouldn't toggle.
+      if (e.button === undefined || e.button === 0) handlerRef.current();
+    };
+    return () => {
+      if (node) node.onMouseDown = undefined;
+    };
+  }, []);
+
+  return (
+    // @ts-expect-error - ref typing on intrinsic <box> is permissive
+    <box ref={ref} {...rest}>
+      {children}
+    </box>
+  );
 }
 
 const ROLE_STYLE: Record<
@@ -590,7 +693,7 @@ const ROLE_STYLE: Record<
 
 type Segment =
   | { kind: "text"; text: string }
-  | { kind: "tool"; name: string; summary: string }
+  | { kind: "tool"; name: string; summary: string; full: string }
   | { kind: "spawn"; argsJson: string; resultJson: string };
 
 const TOOL_RE = /<([a-zA-Z][\w-]*)\b([^>]*?)(?:\/>|>([\s\S]*?)<\/\1\s*>)/g;
@@ -651,7 +754,7 @@ function parseSegments(input: string): Segment[] {
         ? trimmed.split("\n")[0].slice(0, 60) +
           (trimmed.length > 60 || trimmed.includes("\n") ? "…" : "")
         : "";
-      out.push({ kind: "tool", name, summary });
+      out.push({ kind: "tool", name, summary, full: trimmed });
     }
     last = start + m[0].length;
   }
@@ -702,16 +805,21 @@ function SpawnAgentsCard({
   argsJson,
   resultJson,
   expanded,
+  badge,
+  onToggle,
 }: {
   argsJson: string;
   resultJson: string;
   expanded: boolean;
+  badge?: number;
+  onToggle?: () => void;
 }): React.ReactElement {
   const specs = parseSpawnArgs(argsJson);
   const results = parseSpawnResults(resultJson);
   const names = specs.map((s) => s.agent_type).join(", ") || "(no agents)";
   return (
-    <box
+    <ClickableBox
+      onClick={() => onToggle?.()}
       flexDirection="column"
       borderStyle="rounded"
       borderColor="magenta"
@@ -719,11 +827,19 @@ function SpawnAgentsCard({
       paddingRight={1}
     >
       <box flexDirection="row">
+        {badge !== undefined ? (
+          <text fg="yellow" attributes={1}>
+            [{badge}]{" "}
+          </text>
+        ) : null}
         <text fg="magenta" attributes={1}>
           ⚙ Agents:{" "}
         </text>
         <text fg="white">{names}</text>
-        <text fg="gray"> {expanded ? "[Ctrl+T to collapse]" : "[Ctrl+T to expand]"}</text>
+        <text fg="gray">
+          {" "}
+          {expanded ? "(tap or /x to collapse)" : "(tap or /x to expand)"}
+        </text>
       </box>
       {expanded
         ? specs.map((spec, i) => {
@@ -746,11 +862,20 @@ function SpawnAgentsCard({
             );
           })
         : null}
-    </box>
+    </ClickableBox>
   );
 }
 
-function MessageCard({ role, text, reasoning, header, expandTools }: CardProps): React.ReactElement {
+function MessageCard({
+  role,
+  text,
+  reasoning,
+  header,
+  expandTools,
+  msgIdx,
+  expandedIds,
+  onToggle,
+}: CardProps): React.ReactElement {
   const style = ROLE_STYLE[role];
   const segments =
     role === "agent" && text
@@ -758,6 +883,9 @@ function MessageCard({ role, text, reasoning, header, expandTools }: CardProps):
       : text
         ? [{ kind: "text" as const, text }]
         : [];
+
+  // Per-message badge counter for tool/spawn segments.
+  let badgeCounter = 0;
 
   return (
     <box
@@ -801,30 +929,56 @@ function MessageCard({ role, text, reasoning, header, expandTools }: CardProps):
             </text>
           );
         }
+        badgeCounter += 1;
+        const badge = badgeCounter;
+        const id = msgIdx !== undefined ? `${msgIdx}:${i}` : "";
+        const perItemExpanded = id ? !!expandedIds?.has(id) : false;
+        const isExpanded = !!expandTools || perItemExpanded;
         if (seg.kind === "spawn") {
           return (
             <SpawnAgentsCard
               key={i}
               argsJson={seg.argsJson}
               resultJson={seg.resultJson}
-              expanded={!!expandTools}
+              expanded={isExpanded}
+              badge={badge}
+              onToggle={id ? () => onToggle?.(id) : undefined}
             />
           );
         }
         return (
-          <box
+          <ClickableBox
             key={i}
-            flexDirection="row"
+            onClick={() => (id ? onToggle?.(id) : undefined)}
+            flexDirection="column"
             borderStyle="rounded"
             borderColor="magenta"
             paddingLeft={1}
             paddingRight={1}
           >
-            <text fg="magenta" attributes={1}>
-              ⚙ {toolLabel(seg.name)}
-            </text>
-            {seg.summary ? <text fg="gray"> — {seg.summary}</text> : null}
-          </box>
+            <box flexDirection="row">
+              <text fg="yellow" attributes={1}>
+                [{badge}]{" "}
+              </text>
+              <text fg="magenta" attributes={1}>
+                ⚙ {toolLabel(seg.name)}
+              </text>
+              {seg.summary ? <text fg="gray"> — {seg.summary}</text> : null}
+              {seg.full ? (
+                <text fg="gray">
+                  {" "}
+                  {isExpanded ? "(tap to collapse)" : "(tap to expand)"}
+                </text>
+              ) : null}
+            </box>
+            {isExpanded && seg.full ? (
+              <box marginTop={1} paddingLeft={1}>
+                <text fg="white" wrapMode="word">
+                  {seg.full}
+                </text>
+              </box>
+            ) : null}
+          </ClickableBox>
         );
       })}
     </box>
