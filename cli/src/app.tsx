@@ -13,7 +13,12 @@ import {
 } from "./utils/fireworks.js";
 import { route } from "./utils/router.js";
 import { getCliEnv } from "./utils/env.js";
-import { TOOL_DEFS, VISIBLE_TOOLS, executeTool } from "./utils/tools.js";
+import {
+  END_TURN_TOOL,
+  TOOL_DEFS,
+  VISIBLE_TOOLS,
+  executeTool,
+} from "./utils/tools.js";
 
 export type AppMode = "LITE" | "NORMAL" | "MAX" | "PLAN";
 
@@ -130,6 +135,7 @@ async function streamToBackend(
         })),
       });
 
+      let endTurn = false;
       for (const tc of result.toolCalls) {
         const visible = VISIBLE_TOOLS.has(tc.name);
         if (visible) {
@@ -146,7 +152,9 @@ async function streamToBackend(
           tool_call_id: tc.id,
           content: out,
         });
+        if (tc.name === END_TURN_TOOL) endTurn = true;
       }
+      if (endTurn) return { ok: true };
     }
   } catch (err) {
     if (err instanceof FireworksError) {
