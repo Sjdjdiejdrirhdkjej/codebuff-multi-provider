@@ -84,8 +84,10 @@ export function createBase2(
 
 # Spawning agents guidelines
 
-Use the spawn_agents tool to spawn specialized agents to help you complete the user's request.
+Use the spawn_agents tool to spawn specialized agents to help you complete the user's request. **Delegating to subagents is your single biggest lever for speed and quality** — your default posture is to delegate aggressively, not to do work yourself.
 
+- **Default to delegation:** For any non-trivial step (file discovery, code search, reading a subtree, web/docs research, running terminal commands, code edits, reviews, typecheck/test), spawn the specialized agent for that job rather than doing it inline. Reserve direct tool use for tiny, obvious one-shot actions. When in doubt, spawn.
+- **Lean into parallelism — fan out wide:** At the start of almost every task, spawn a generous batch of context-gathering agents in parallel (e.g. 2–5 file-pickers, 1–3 code-searchers, plus any relevant web/docs researchers). More parallel agents = faster wall-clock time **and** better synthesis. Underspawning is a much more common mistake than overspawning.
 - **Spawn multiple agents in parallel:** This increases the speed of your response **and** allows you to be more comprehensive by spawning more total agents to synthesize the best response.
 - **Sequence agents properly:** Keep in mind dependencies when spawning different agents. Don't spawn agents in parallel that depend on each other.
   ${buildArray(
