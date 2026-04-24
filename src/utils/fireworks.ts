@@ -124,6 +124,18 @@ export class FireworksError extends Error {
   }
 }
 
+/**
+ * Wrapper around fetch that explicitly enables TLS certificate verification.
+ * In Node.js this is the default; in Bun we pass tls.rejectUnauthorized: true
+ * to make it unambiguous.
+ */
+function secureFetch(url: string, init: RequestInit): Promise<Response> {
+  if (typeof Bun !== "undefined") {
+    return fetch(url, { ...init, tls: { rejectUnauthorized: true } } as RequestInit);
+  }
+  return fetch(url, init);
+}
+
 export async function callFireworks(
   req: FireworksRequest,
 ): Promise<FireworksResponse> {
@@ -133,7 +145,7 @@ export async function callFireworks(
     Accept: "application/json",
   };
   let safeReq = prepareRequest(req);
-  let res = await fetch(FIREWORKS_URL, {
+  let res = await secureFetch(FIREWORKS_URL, {
     method: "POST",
     headers,
     body: JSON.stringify(safeReq),
@@ -141,7 +153,7 @@ export async function callFireworks(
 
   if (res.status === 413) {
     safeReq = prepareRequest({ ...safeReq, messages: aggressivelyTrim(safeReq.messages) });
-    res = await fetch(FIREWORKS_URL, {
+    res = await secureFetch(FIREWORKS_URL, {
       method: "POST",
       headers,
       body: JSON.stringify(safeReq),
@@ -202,7 +214,7 @@ export async function streamFireworks(
     Accept: "text/event-stream",
   };
   let safeReq = prepareRequest(req);
-  let res = await fetch(FIREWORKS_URL, {
+  let res = await secureFetch(FIREWORKS_URL, {
     method: "POST",
     headers,
     body: JSON.stringify({ ...safeReq, stream: true }),
@@ -210,7 +222,7 @@ export async function streamFireworks(
 
   if (res.status === 413) {
     safeReq = prepareRequest({ ...safeReq, messages: aggressivelyTrim(safeReq.messages) });
-    res = await fetch(FIREWORKS_URL, {
+    res = await secureFetch(FIREWORKS_URL, {
       method: "POST",
       headers,
       body: JSON.stringify({ ...safeReq, stream: true }),
