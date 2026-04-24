@@ -137,8 +137,7 @@ export async function callFireworks(
     method: "POST",
     headers,
     body: JSON.stringify(safeReq),
-    tls: { rejectUnauthorized: false },
-  } as RequestInit);
+  });
 
   if (res.status === 413) {
     safeReq = prepareRequest({ ...safeReq, messages: aggressivelyTrim(safeReq.messages) });
@@ -146,8 +145,7 @@ export async function callFireworks(
       method: "POST",
       headers,
       body: JSON.stringify(safeReq),
-      tls: { rejectUnauthorized: false },
-    } as RequestInit);
+    });
   }
 
   const text = await res.text();
@@ -208,8 +206,7 @@ export async function streamFireworks(
     method: "POST",
     headers,
     body: JSON.stringify({ ...safeReq, stream: true }),
-    tls: { rejectUnauthorized: false },
-  } as RequestInit);
+  });
 
   if (res.status === 413) {
     safeReq = prepareRequest({ ...safeReq, messages: aggressivelyTrim(safeReq.messages) });
@@ -217,8 +214,7 @@ export async function streamFireworks(
       method: "POST",
       headers,
       body: JSON.stringify({ ...safeReq, stream: true }),
-      tls: { rejectUnauthorized: false },
-    } as RequestInit);
+    });
   }
 
   if (!res.ok || !res.body) {

@@ -32,7 +32,7 @@ const externals = [
 const args = [
   "build",
   entry,
-  "--target=bun",
+  "--target=node",
   "--format=esm",
   `--outdir=${outDir}`,
   "--minify",

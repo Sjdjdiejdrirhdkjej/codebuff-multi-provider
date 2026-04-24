@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, statSync } from "node:fs";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { Command } from "commander";
 
@@ -233,8 +234,16 @@ export async function main(rawArgv: string[] = process.argv.slice(2)): Promise<v
 }
 
 // Only auto-run when executed as the entry point.
-const invokedAsMain =
-  typeof Bun !== "undefined" && Bun.main === import.meta.path;
+let invokedAsMain = false;
+if (typeof Bun !== "undefined") {
+  invokedAsMain = Bun.main === import.meta.path;
+} else {
+  try {
+    invokedAsMain = process.argv[1] === fileURLToPath(import.meta.url);
+  } catch {
+    invokedAsMain = false;
+  }
+}
 if (invokedAsMain) {
   void main();
 }
