@@ -245,17 +245,17 @@ export function App(props: AppProps): React.ReactElement {
         (props.agentId ? `  agent: ${props.agentId}` : `  agent: ${MODE_TO_AGENT[props.initialMode]}`) +
         (props.conversationId ? `  continuing: ${props.conversationId}` : ""),
     },
-    { role: "system", text: "Type /help for commands, /agents to list agents, /exit to quit. Press 'e' to expand/collapse spawned-agent details." },
+    { role: "system", text: "Type /help for commands, /agents to list agents, /exit to quit. Press Ctrl+T to expand/collapse spawned-agent details." },
   ]);
   const [showThinking, setShowThinking] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [expandTools, setExpandTools] = useState(false);
 
-  // Press 'e' to toggle expand/collapse for all spawn-agents cards.
+  // Press Ctrl+T to toggle expand/collapse for all spawn-agents cards.
   useKeyboard((event: { name?: string; sequence?: string; ctrl?: boolean; meta?: boolean }) => {
-    if (event.ctrl || event.meta) return;
+    if (!event.ctrl) return;
     const k = event.name ?? event.sequence ?? "";
-    if (k === "e") setExpandTools((v) => !v);
+    if (k === "t" || k === "T" || k === "\u0014") setExpandTools((v) => !v);
   });
 
   useEffect(() => {
@@ -572,7 +572,7 @@ function SpawnAgentsCard({
           ⚙ Agents:{" "}
         </text>
         <text fg="white">{names}</text>
-        <text fg="gray"> {expanded ? "[press e to collapse]" : "[press e to expand]"}</text>
+        <text fg="gray"> {expanded ? "[Ctrl+T to collapse]" : "[Ctrl+T to expand]"}</text>
       </box>
       {expanded
         ? specs.map((spec, i) => {
