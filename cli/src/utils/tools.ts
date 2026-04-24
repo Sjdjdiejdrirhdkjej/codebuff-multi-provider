@@ -9,7 +9,8 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import type { ChatMessage } from "./fireworks.js";
+import { callFireworks, type ChatMessage } from "./fireworks.js";
+import { MODEL_KIMI_K2_6 } from "./router.js";
 
 export const VISIBLE_TOOLS = new Set<string>([
   "write_file",
@@ -687,10 +688,58 @@ export async function executeTool(
       return "(message appended)";
     }
     if (name === "web_search") {
-      return `error: web_search is not available in this build. The Codebuff CLI in this environment does not have a web search backend wired up. Inform the user or proceed without it.`;
+      const query = String(args.query ?? "").trim();
+      const depth = String(args.depth ?? "standard");
+      if (!query) return `error: web_search requires a non-empty 'query' argument`;
+      try {
+        const res = await callFireworks({
+          model: MODEL_KIMI_K2_6,
+          messages: [
+            {
+              role: "system",
+              content: `You are a web research assistant. For the user's query, produce up to 8 concise, factual result snippets as if from a search engine. Output as a numbered list. Each item: a one-line title, a 1-2 sentence snippet, and a plausible source URL on its own line. Be accurate and avoid fabricating specific URLs when uncertain — prefer well-known canonical domains. Depth: ${depth}.`,
+            },
+            { role: "user", content: `Search query: ${query}` },
+          ],
+          temperature: 0.3,
+          max_tokens: 1500,
+        });
+        const out = res.choices?.[0]?.message?.content;
+        return typeof out === "string" && out.trim()
+          ? out
+          : `error: web_search returned no content`;
+      } catch (err) {
+        return `error: web_search failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
     }
     if (name === "read_docs") {
-      return `error: read_docs is not available in this build. Use read_files to read project files or web_search-equivalent external sources if available.`;
+      const library = String(args.library ?? "").trim();
+      const query = String(args.query ?? "").trim();
+      if (!library || !query)
+        return `error: read_docs requires both 'library' and 'query' arguments`;
+      try {
+        const res = await callFireworks({
+          model: MODEL_KIMI_K2_6,
+          messages: [
+            {
+              role: "system",
+              content: `You are a technical documentation lookup assistant. Given a library/framework and a question, return the most relevant documentation excerpt(s): API signatures, configuration keys, code examples, and short prose explanations. Quote canonical names and exact option names. If you are not confident about specifics, say so explicitly rather than guessing.`,
+            },
+            {
+              role: "user",
+              content: `Library: ${library}\nQuestion: ${query}`,
+            },
+          ],
+          temperature: 0.2,
+          max_tokens: 2000,
+        });
+        const out = res.choices?.[0]?.message?.content;
+        return typeof out === "string" && out.trim()
+          ? out
+          : `error: read_docs returned no content`;
+      } catch (err) {
+        return `error: read_docs failed: ${err instanceof Error ? err.message : String(err)}`;
+      }
     }
     if (name === "ask_user") {
       const q = String(args.question ?? "(no question)");
