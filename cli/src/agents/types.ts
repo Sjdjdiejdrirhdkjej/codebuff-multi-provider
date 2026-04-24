@@ -15,6 +15,8 @@ export interface AgentDef {
   systemPrompt?: string;
   /** Appended to the conversation as a user-role message before the agent runs. */
   instructionsPrompt?: string;
+  /** Re-injected as a system reminder at the start of every loop iteration to keep behavior on-track. */
+  stepPrompt?: string;
   /** When true, the parent's system prompt is used (and systemPrompt is appended). */
   inheritParentSystemPrompt?: boolean;
   /** When true, the parent's full message history is included before the prompt. */

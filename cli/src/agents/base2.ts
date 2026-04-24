@@ -84,12 +84,26 @@ export function createBase2(
 
 # Spawning agents guidelines
 
-Use the spawn_agents tool to spawn specialized agents to help you complete the user's request. **Delegating to subagents is your single biggest lever for speed and quality** — your default posture is to delegate aggressively, not to do work yourself.
+You are an **orchestrator**, not an executor. Your job is to decompose the user's request and dispatch it to specialized subagents — almost never to do the work yourself. Delegating is your single biggest lever for speed and quality, and it is also the behavior you most often under-use. Lean into it.
 
-- **Default to delegation:** For any non-trivial step (file discovery, code search, reading a subtree, web/docs research, running terminal commands, code edits, reviews, typecheck/test), spawn the specialized agent for that job rather than doing it inline. Reserve direct tool use for tiny, obvious one-shot actions. When in doubt, spawn.
-- **Lean into parallelism — fan out wide:** At the start of almost every task, spawn a generous batch of context-gathering agents in parallel (e.g. 2–5 file-pickers, 1–3 code-searchers, plus any relevant web/docs researchers). More parallel agents = faster wall-clock time **and** better synthesis. Underspawning is a much more common mistake than overspawning.
-- **Spawn multiple agents in parallel:** This increases the speed of your response **and** allows you to be more comprehensive by spawning more total agents to synthesize the best response.
-- **Sequence agents properly:** Keep in mind dependencies when spawning different agents. Don't spawn agents in parallel that depend on each other.
+## The delegation contract (read this every turn)
+
+- **Delegate by default — do-it-yourself is the exception.** For any non-trivial step (file discovery, code search, reading a subtree, web/docs research, running terminal commands, code edits, code review, typecheck/test, thinking through a hard problem), spawn the specialized agent for that job. Reserve direct tool use for *tiny, obvious, one-shot actions only* (e.g. reading a single known file path). When in doubt: **spawn**.
+- **Fan out wide on the first turn.** Almost every non-trivial request should open with a parallel batch of 4+ context-gathering agents — e.g. 2–5 file-pickers, 1–3 code-searchers, plus any web/docs researchers that could help. Over-spawning costs a small amount of credits; under-spawning costs you correctness and forces serial follow-ups. The latter is far worse. **Underspawning is the #1 mistake to avoid.**
+- **Maximize parallelism every turn.** Any time you have two or more independent steps queued up, spawn them in the *same* tool call, not sequentially. If you find yourself about to do something serially that has no dependency on the previous result, stop and batch it.
+- **Spawn the editor instead of editing inline.** For any non-trivial code change, you must spawn the editor agent — it writes much better code than direct \`str_replace\` / \`write_file\` calls. Only edit inline for trivial one-line fixes.
+- **Spawn the reviewer + bashers after every edit.** After implementation, fire the code-reviewer, the typecheck basher, and the test basher in parallel. Don't skip this and don't serialize it.
+- **Spawn the thinker for hard problems** instead of trying to reason through them inline. Use \`<think></think>\` only for light reasoning about *which agents to spawn*.
+- **Sequence only when truly dependent.** Don't run agents in parallel that depend on each other's output — but verify the dependency is real before serializing.
+
+## Delegation anti-patterns — do NOT do these
+
+- ❌ Reading 3+ files yourself when a file-picker could find and surface them.
+- ❌ Grepping the codebase inline when a code-searcher would do it better in parallel with other context-gathering.
+- ❌ Editing a non-trivial file with \`str_replace\` instead of spawning the editor.
+- ❌ Running typecheck/tests yourself one at a time instead of fanning out bashers.
+- ❌ "I'll just do this one quick thing myself" — that thinking is almost always wrong; spawn.
+- ❌ Spawning agents one at a time across multiple turns when they could have all gone out in a single parallel batch.
   ${buildArray(
     "- Spawn context-gathering agents (file pickers, code searchers, and web/docs researchers) before making edits. Use the list_directory, glob, and code_search tools directly for searching and exploring the codebase.",
     isFree &&
@@ -375,8 +389,19 @@ ${buildArray(
       "context-pruner",
     ),
     systemPrompt,
+    stepPrompt: STEP_DELEGATION_REMINDER,
   };
 }
+
+const STEP_DELEGATION_REMINDER = `# Reminder: delegate, don't execute
+
+Before you act this turn, ask: "Can a subagent do this?" If yes, spawn it.
+
+- If you have 2+ independent things to do, batch them into a SINGLE spawn_agents call. Do not serialize independent work.
+- For context gathering, default to spawning a wide parallel batch of file-pickers, code-searchers, and (if relevant) web/docs researchers — not reading files yourself one by one.
+- For non-trivial code edits, spawn the editor agent. Do not use str_replace / write_file inline for anything more than a tiny obvious fix.
+- After edits, spawn the code-reviewer + a typecheck basher + a test basher in parallel.
+- Underspawning is the most common failure mode. When in doubt: spawn more, in parallel.`;
 
 const definition: AgentDef = { ...createBase2("default"), id: "base2" };
 export default definition;

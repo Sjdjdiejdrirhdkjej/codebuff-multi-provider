@@ -117,9 +117,14 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
       logger.warn({ agentId: agent.id }, "sub-agent exceeded 60 rounds; stopping");
       break;
     }
+    // Re-inject the stepPrompt as a transient system reminder each turn so
+    // long-running orchestrators don't drift away from delegation/parallelism.
+    const stepMessages: ChatMessage[] = agent.stepPrompt
+      ? [...messages, { role: "system", content: agent.stepPrompt }]
+      : messages;
     const res = await callFireworks({
       model: fireworksModel,
-      messages,
+      messages: stepMessages,
       temperature: 0.3,
       max_tokens: 4096,
       ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
