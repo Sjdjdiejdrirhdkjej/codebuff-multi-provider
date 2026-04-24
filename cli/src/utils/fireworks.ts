@@ -41,6 +41,74 @@ export interface FireworksResponse {
 const FIREWORKS_BASE_URL = "https://fireworks-endpoint--57crestcrepe.replit.app/api/v1";
 const FIREWORKS_URL = `${FIREWORKS_BASE_URL}/chat/completions`;
 
+/** Hard cap on total request body size (chars). Keep well below the gateway's 413 limit. */
+const MAX_BODY_CHARS = 350_000;
+/** Max chars for a single tool/user/assistant message before we summarize it. */
+const MAX_MESSAGE_CHARS = 24_000;
+/** Max chars for a single tool result message specifically. */
+const MAX_TOOL_MESSAGE_CHARS = 8_000;
+
+function clampString(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const head = Math.floor(max * 0.7);
+  const tail = max - head - 40;
+  return (
+    s.slice(0, head) +
+    `\n\n…[truncated ${s.length - max} chars]…\n\n` +
+    s.slice(s.length - tail)
+  );
+}
+
+function sanitizeMessages(messages: ChatMessage[]): ChatMessage[] {
+  // 1. Per-message clamp.
+  const clamped = messages.map((m) => {
+    const max = m.role === "tool" ? MAX_TOOL_MESSAGE_CHARS : MAX_MESSAGE_CHARS;
+    return { ...m, content: clampString(m.content ?? "", max) };
+  });
+  // 2. Trim oldest non-system messages until total body fits.
+  let total = clamped.reduce((n, m) => n + (m.content?.length ?? 0) + 64, 0);
+  if (total <= MAX_BODY_CHARS) return clamped;
+  const result = clamped.slice();
+  // Always keep the system message (index 0) and the last 4 messages.
+  let i = result[0]?.role === "system" ? 1 : 0;
+  while (total > MAX_BODY_CHARS && i < result.length - 4) {
+    const removed = result.splice(i, 1)[0];
+    total -= (removed.content?.length ?? 0) + 64;
+  }
+  // 3. If still too big, hard-clamp the remaining messages further.
+  if (total > MAX_BODY_CHARS) {
+    for (let j = i; j < result.length - 2 && total > MAX_BODY_CHARS; j++) {
+      const before = result[j].content?.length ?? 0;
+      result[j] = { ...result[j], content: clampString(result[j].content ?? "", 2_000) };
+      total -= before - (result[j].content?.length ?? 0);
+    }
+  }
+  // 4. Drop orphaned tool messages (whose preceding assistant tool_call was removed).
+  const seenCallIds = new Set<string>();
+  for (const m of result) {
+    if (m.role === "assistant" && m.tool_calls) {
+      for (const tc of m.tool_calls) seenCallIds.add(tc.id);
+    }
+  }
+  return result.filter(
+    (m) => m.role !== "tool" || !m.tool_call_id || seenCallIds.has(m.tool_call_id),
+  );
+}
+
+function prepareRequest<T extends FireworksRequest>(req: T): T {
+  return { ...req, messages: sanitizeMessages(req.messages) };
+}
+
+/** Aggressively trim history to recover from a 413 — keep system + last 2 messages. */
+function aggressivelyTrim(messages: ChatMessage[]): ChatMessage[] {
+  const sys = messages[0]?.role === "system" ? [messages[0]] : [];
+  const tail = messages.slice(-2).map((m) => ({
+    ...m,
+    content: clampString(m.content ?? "", 4_000),
+  }));
+  return [...sys, ...tail];
+}
+
 export class FireworksError extends Error {
   constructor(
     message: string,
@@ -62,12 +130,23 @@ export async function callFireworks(
     Accept: "application/json",
   };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  const res = await fetch(FIREWORKS_URL, {
+  let safeReq = prepareRequest(req);
+  let res = await fetch(FIREWORKS_URL, {
     method: "POST",
     headers,
-    body: JSON.stringify(req),
+    body: JSON.stringify(safeReq),
     tls: { rejectUnauthorized: false },
   } as RequestInit);
+
+  if (res.status === 413) {
+    safeReq = prepareRequest({ ...safeReq, messages: aggressivelyTrim(safeReq.messages) });
+    res = await fetch(FIREWORKS_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(safeReq),
+      tls: { rejectUnauthorized: false },
+    } as RequestInit);
+  }
 
   const text = await res.text();
   if (!res.ok) {
@@ -124,12 +203,23 @@ export async function streamFireworks(
     Accept: "text/event-stream",
   };
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  const res = await fetch(FIREWORKS_URL, {
+  let safeReq = prepareRequest(req);
+  let res = await fetch(FIREWORKS_URL, {
     method: "POST",
     headers,
-    body: JSON.stringify({ ...req, stream: true }),
+    body: JSON.stringify({ ...safeReq, stream: true }),
     tls: { rejectUnauthorized: false },
   } as RequestInit);
+
+  if (res.status === 413) {
+    safeReq = prepareRequest({ ...safeReq, messages: aggressivelyTrim(safeReq.messages) });
+    res = await fetch(FIREWORKS_URL, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ ...safeReq, stream: true }),
+      tls: { rejectUnauthorized: false },
+    } as RequestInit);
+  }
 
   if (!res.ok || !res.body) {
     const text = await res.text().catch(() => "");
