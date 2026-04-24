@@ -13,7 +13,7 @@ import {
 } from "./utils/fireworks.js";
 import { route } from "./utils/router.js";
 import { getCliEnv } from "./utils/env.js";
-import { TOOL_DEFS, executeTool } from "./utils/tools.js";
+import { TOOL_DEFS, VISIBLE_TOOLS, executeTool } from "./utils/tools.js";
 
 export type AppMode = "LITE" | "NORMAL" | "MAX" | "PLAN";
 
@@ -131,7 +131,16 @@ async function streamToBackend(
       });
 
       for (const tc of result.toolCalls) {
+        const visible = VISIBLE_TOOLS.has(tc.name);
+        if (visible) {
+          onToken(`\n<${tc.name}>${tc.args || ""}</${tc.name}>\n`, "content");
+        }
         const out = executeTool(tc.name, tc.args, ctx.projectRoot);
+        if (visible) {
+          const preview =
+            out.length > 200 ? out.slice(0, 200).replace(/\n/g, " ") + "…" : out;
+          onToken(`→ ${preview}\n`, "content");
+        }
         messages.push({
           role: "tool",
           tool_call_id: tc.id,
