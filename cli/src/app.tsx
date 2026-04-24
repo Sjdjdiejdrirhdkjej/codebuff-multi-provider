@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { useKeyboard } from "@opentui/react";
 
 import { ChatInput } from "./chat.js";
 import { HELP_COMMANDS, renderHelp } from "./commands/help.js";
@@ -181,7 +182,10 @@ async function streamToBackend(
           parentSystemPrompt: systemPromptForAgent,
           depth: 0,
         });
-        if (visible) {
+        if (tc.name === "spawn_agents") {
+          // Emit a paired result block so the card can show agent outputs on expand.
+          onToken(`<spawn_agents_result>${out}</spawn_agents_result>\n`, "content");
+        } else if (visible) {
           const preview =
             out.length > 200 ? out.slice(0, 200).replace(/\n/g, " ") + "…" : out;
           onToken(`→ ${preview}\n`, "content");
@@ -241,10 +245,18 @@ export function App(props: AppProps): React.ReactElement {
         (props.agentId ? `  agent: ${props.agentId}` : `  agent: ${MODE_TO_AGENT[props.initialMode]}`) +
         (props.conversationId ? `  continuing: ${props.conversationId}` : ""),
     },
-    { role: "system", text: "Type /help for commands, /agents to list agents, /exit to quit." },
+    { role: "system", text: "Type /help for commands, /agents to list agents, /exit to quit. Press 'e' to expand/collapse spawned-agent details." },
   ]);
   const [showThinking, setShowThinking] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
+  const [expandTools, setExpandTools] = useState(false);
+
+  // Press 'e' to toggle expand/collapse for all spawn-agents cards.
+  useKeyboard((event: { name?: string; sequence?: string; ctrl?: boolean; meta?: boolean }) => {
+    if (event.ctrl || event.meta) return;
+    const k = event.name ?? event.sequence ?? "";
+    if (k === "e") setExpandTools((v) => !v);
+  });
 
   useEffect(() => {
     if (props.initialPrompt) {
@@ -378,6 +390,7 @@ export function App(props: AppProps): React.ReactElement {
             text={l.text}
             reasoning={showThinking ? l.reasoning : undefined}
             header={l.header}
+            expandTools={expandTools}
           />
         ))}
       </scrollbox>
@@ -412,6 +425,7 @@ interface CardProps {
   text: string;
   reasoning?: string;
   header?: string;
+  expandTools?: boolean;
 }
 
 const ROLE_STYLE: Record<
@@ -419,13 +433,14 @@ const ROLE_STYLE: Record<
   { label: string; fg: string; border: string }
 > = {
   user: { label: "you", fg: "white", border: "cyan" },
-  agent: { label: "codebuff", fg: "green", border: "green" },
+  agent: { label: "codebuff", fg: "white", border: "green" },
   system: { label: "system", fg: "gray", border: "gray" },
 };
 
 type Segment =
   | { kind: "text"; text: string }
-  | { kind: "tool"; name: string; summary: string };
+  | { kind: "tool"; name: string; summary: string }
+  | { kind: "spawn"; argsJson: string; resultJson: string };
 
 const TOOL_RE = /<([a-zA-Z][\w-]*)\b([^>]*?)(?:\/>|>([\s\S]*?)<\/\1\s*>)/g;
 
@@ -468,12 +483,25 @@ function parseSegments(input: string): Segment[] {
       if (t.trim()) out.push({ kind: "text", text: t });
     }
     const name = m[1];
-    const inner = (m[3] ?? "").trim();
-    const summary = inner
-      ? inner.split("\n")[0].slice(0, 60) +
-        (inner.length > 60 || inner.includes("\n") ? "…" : "")
-      : "";
-    out.push({ kind: "tool", name, summary });
+    const inner = m[3] ?? "";
+    if (name === "spawn_agents_result") {
+      // Attach the result to the most recent spawn segment.
+      for (let i = out.length - 1; i >= 0; i--) {
+        if (out[i].kind === "spawn" && !(out[i] as { resultJson: string }).resultJson) {
+          (out[i] as { resultJson: string }).resultJson = inner.trim();
+          break;
+        }
+      }
+    } else if (name === "spawn_agents") {
+      out.push({ kind: "spawn", argsJson: inner.trim(), resultJson: "" });
+    } else {
+      const trimmed = inner.trim();
+      const summary = trimmed
+        ? trimmed.split("\n")[0].slice(0, 60) +
+          (trimmed.length > 60 || trimmed.includes("\n") ? "…" : "")
+        : "";
+      out.push({ kind: "tool", name, summary });
+    }
     last = start + m[0].length;
   }
   if (last < input.length) {
@@ -484,7 +512,321 @@ function parseSegments(input: string): Segment[] {
   return out;
 }
 
-function MessageCard({ role, text, reasoning, header }: CardProps): React.ReactElement {
+// ----- Markdown helpers -----
+
+interface InlineRun {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  code?: boolean;
+}
+
+function parseInline(line: string): InlineRun[] {
+  const runs: InlineRun[] = [];
+  let i = 0;
+  while (i < line.length) {
+    if (line[i] === "`") {
+      const end = line.indexOf("`", i + 1);
+      if (end !== -1) {
+        runs.push({ text: line.slice(i + 1, end), code: true });
+        i = end + 1;
+        continue;
+      }
+    }
+    if (line[i] === "*" && line[i + 1] === "*") {
+      const end = line.indexOf("**", i + 2);
+      if (end !== -1) {
+        runs.push({ text: line.slice(i + 2, end), bold: true });
+        i = end + 2;
+        continue;
+      }
+    }
+    if (line[i] === "*" || line[i] === "_") {
+      const ch = line[i];
+      const end = line.indexOf(ch, i + 1);
+      if (end !== -1 && end !== i + 1) {
+        runs.push({ text: line.slice(i + 1, end), italic: true });
+        i = end + 1;
+        continue;
+      }
+    }
+    // Accumulate plain run.
+    let j = i;
+    while (j < line.length && line[j] !== "`" && line[j] !== "*" && line[j] !== "_") j++;
+    if (j === i) j = i + 1;
+    runs.push({ text: line.slice(i, j) });
+    i = j;
+  }
+  return runs;
+}
+
+function isTableSeparator(line: string): boolean {
+  const t = line.trim();
+  if (!t.startsWith("|")) return false;
+  return /^\|[\s:|-]+\|?$/.test(t);
+}
+
+function isTableRow(line: string): boolean {
+  const t = line.trim();
+  return t.startsWith("|") && t.endsWith("|") && t.includes("|", 1);
+}
+
+function splitRow(line: string): string[] {
+  const t = line.trim();
+  return t
+    .slice(1, t.endsWith("|") ? -1 : undefined)
+    .split("|")
+    .map((c) => c.trim());
+}
+
+interface MdBlock {
+  kind: "p" | "h1" | "h2" | "h3" | "code" | "table" | "blank";
+  lines: string[];
+  rows?: string[][];
+  language?: string;
+}
+
+function parseBlocks(text: string): MdBlock[] {
+  const lines = text.split("\n");
+  const out: MdBlock[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const ln = lines[i];
+    if (!ln.trim()) {
+      out.push({ kind: "blank", lines: [] });
+      i++;
+      continue;
+    }
+    if (ln.startsWith("```")) {
+      const lang = ln.slice(3).trim();
+      const buf: string[] = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith("```")) {
+        buf.push(lines[i]);
+        i++;
+      }
+      i++; // skip closing fence
+      out.push({ kind: "code", lines: buf, language: lang });
+      continue;
+    }
+    if (ln.startsWith("### ")) {
+      out.push({ kind: "h3", lines: [ln.slice(4)] });
+      i++;
+      continue;
+    }
+    if (ln.startsWith("## ")) {
+      out.push({ kind: "h2", lines: [ln.slice(3)] });
+      i++;
+      continue;
+    }
+    if (ln.startsWith("# ")) {
+      out.push({ kind: "h1", lines: [ln.slice(2)] });
+      i++;
+      continue;
+    }
+    if (isTableRow(ln) && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+      const rows: string[][] = [splitRow(ln)];
+      i += 2; // skip header + separator
+      while (i < lines.length && isTableRow(lines[i])) {
+        rows.push(splitRow(lines[i]));
+        i++;
+      }
+      out.push({ kind: "table", lines: [], rows });
+      continue;
+    }
+    // Paragraph: collect contiguous non-blank, non-special lines.
+    const buf: string[] = [ln];
+    i++;
+    while (
+      i < lines.length &&
+      lines[i].trim() &&
+      !lines[i].startsWith("#") &&
+      !lines[i].startsWith("```") &&
+      !isTableRow(lines[i])
+    ) {
+      buf.push(lines[i]);
+      i++;
+    }
+    out.push({ kind: "p", lines: buf });
+  }
+  return out;
+}
+
+function InlineText({
+  runs,
+  baseFg,
+  bold,
+}: {
+  runs: InlineRun[];
+  baseFg: string;
+  bold?: boolean;
+}): React.ReactElement {
+  return (
+    <text fg={baseFg} attributes={bold ? 1 : 0} wrapMode="word">
+      {runs.map((r, i) => (
+        <text
+          key={i}
+          fg={r.code ? "magenta" : baseFg}
+          attributes={r.bold || bold ? 1 : r.italic ? 2 : 0}
+        >
+          {r.text}
+        </text>
+      ))}
+    </text>
+  );
+}
+
+function MarkdownText({ text, baseFg }: { text: string; baseFg: string }): React.ReactElement {
+  const blocks = parseBlocks(text);
+  return (
+    <box flexDirection="column">
+      {blocks.map((b, i) => {
+        if (b.kind === "blank") return <text key={i}> </text>;
+        if (b.kind === "code") {
+          return (
+            <box
+              key={i}
+              flexDirection="column"
+              borderStyle="rounded"
+              borderColor="gray"
+              paddingLeft={1}
+              paddingRight={1}
+            >
+              {b.language ? (
+                <text fg="gray" attributes={2}>
+                  {b.language}
+                </text>
+              ) : null}
+              {b.lines.map((ln, j) => (
+                <text key={j} fg="cyan">
+                  {ln}
+                </text>
+              ))}
+            </box>
+          );
+        }
+        if (b.kind === "h1" || b.kind === "h2" || b.kind === "h3") {
+          const fg = b.kind === "h1" ? "yellow" : b.kind === "h2" ? "cyan" : "magenta";
+          return (
+            <text key={i} fg={fg} attributes={1}>
+              {(b.kind === "h1" ? "▸ " : b.kind === "h2" ? "» " : "• ") + b.lines[0]}
+            </text>
+          );
+        }
+        if (b.kind === "table" && b.rows) {
+          const cols = b.rows[0]?.length ?? 0;
+          const widths: number[] = new Array(cols).fill(0);
+          for (const row of b.rows) {
+            for (let c = 0; c < cols; c++) {
+              widths[c] = Math.max(widths[c], (row[c] ?? "").length);
+            }
+          }
+          const pad = (s: string, w: number): string => s + " ".repeat(Math.max(0, w - s.length));
+          return (
+            <box key={i} flexDirection="column" borderStyle="rounded" borderColor="gray" paddingLeft={1} paddingRight={1}>
+              {b.rows.map((row, ri) => (
+                <text key={ri} fg={ri === 0 ? "yellow" : baseFg} attributes={ri === 0 ? 1 : 0}>
+                  {row.map((cell, ci) => pad(cell, widths[ci])).join("  │  ")}
+                </text>
+              ))}
+            </box>
+          );
+        }
+        // Paragraph with inline formatting per line.
+        return (
+          <box key={i} flexDirection="column">
+            {b.lines.map((ln, j) => (
+              <InlineText key={j} runs={parseInline(ln)} baseFg={baseFg} />
+            ))}
+          </box>
+        );
+      })}
+    </box>
+  );
+}
+
+interface SpawnAgentSpec {
+  agent_type: string;
+  prompt?: string;
+}
+interface SpawnAgentResult {
+  agent_type: string;
+  output?: string;
+  error?: string;
+}
+
+function parseSpawnArgs(json: string): SpawnAgentSpec[] {
+  try {
+    const obj = JSON.parse(json) as { agents?: SpawnAgentSpec[] };
+    return Array.isArray(obj.agents) ? obj.agents : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseSpawnResults(json: string): SpawnAgentResult[] {
+  if (!json) return [];
+  try {
+    const obj = JSON.parse(json) as SpawnAgentResult[];
+    return Array.isArray(obj) ? obj : [];
+  } catch {
+    return [];
+  }
+}
+
+function SpawnAgentsCard({
+  argsJson,
+  resultJson,
+  expanded,
+}: {
+  argsJson: string;
+  resultJson: string;
+  expanded: boolean;
+}): React.ReactElement {
+  const specs = parseSpawnArgs(argsJson);
+  const results = parseSpawnResults(resultJson);
+  const names = specs.map((s) => s.agent_type).join(", ") || "(no agents)";
+  return (
+    <box
+      flexDirection="column"
+      borderStyle="rounded"
+      borderColor="magenta"
+      paddingLeft={1}
+      paddingRight={1}
+    >
+      <box flexDirection="row">
+        <text fg="magenta" attributes={1}>
+          ⚙ Agents:{" "}
+        </text>
+        <text fg="white">{names}</text>
+        <text fg="gray"> {expanded ? "[press e to collapse]" : "[press e to expand]"}</text>
+      </box>
+      {expanded
+        ? specs.map((spec, i) => {
+            const res = results[i];
+            const out = res?.output ?? res?.error ?? "(pending…)";
+            return (
+              <box key={i} flexDirection="column" marginTop={1} paddingLeft={1}>
+                <text fg="cyan" attributes={1}>
+                  ▸ {spec.agent_type}
+                </text>
+                {spec.prompt ? (
+                  <text fg="gray" wrapMode="word">
+                    prompt: {spec.prompt}
+                  </text>
+                ) : null}
+                <box marginTop={1}>
+                  <MarkdownText text={out} baseFg="white" />
+                </box>
+              </box>
+            );
+          })
+        : null}
+    </box>
+  );
+}
+
+function MessageCard({ role, text, reasoning, header, expandTools }: CardProps): React.ReactElement {
   const style = ROLE_STYLE[role];
   const segments =
     role === "agent" && text
@@ -525,12 +867,27 @@ function MessageCard({ role, text, reasoning, header }: CardProps): React.ReactE
           </text>
         </box>
       ) : null}
-      {segments.map((seg, i) =>
-        seg.kind === "text" ? (
-          <text key={i} fg={style.fg} wrapMode="word">
-            {seg.text}
-          </text>
-        ) : (
+      {segments.map((seg, i) => {
+        if (seg.kind === "text") {
+          return role === "agent" ? (
+            <MarkdownText key={i} text={seg.text} baseFg={style.fg} />
+          ) : (
+            <text key={i} fg={style.fg} wrapMode="word">
+              {seg.text}
+            </text>
+          );
+        }
+        if (seg.kind === "spawn") {
+          return (
+            <SpawnAgentsCard
+              key={i}
+              argsJson={seg.argsJson}
+              resultJson={seg.resultJson}
+              expanded={!!expandTools}
+            />
+          );
+        }
+        return (
           <box
             key={i}
             flexDirection="row"
@@ -544,8 +901,8 @@ function MessageCard({ role, text, reasoning, header }: CardProps): React.ReactE
             </text>
             {seg.summary ? <text fg="gray"> — {seg.summary}</text> : null}
           </box>
-        ),
-      )}
+        );
+      })}
     </box>
   );
 }
