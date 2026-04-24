@@ -9,12 +9,15 @@ import {
 } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
+import { buildCodeIndex, formatCompactTree, indexStats } from "./code-index.js";
 import {
+  callFireworks,
   EXA_ANSWER_URL,
   EXA_CONTENTS_URL,
   EXA_SEARCH_URL,
   type ChatMessage,
 } from "./fireworks.js";
+import { MODEL_GLM_5_1, MODEL_KIMI_K2_6 } from "./router.js";
 
 export const VISIBLE_TOOLS = new Set<string>([
   "write_file",
@@ -246,6 +249,34 @@ export const TOOL_DEFS: ToolDef[] = [
           params: { type: "object" },
         },
         required: ["agent_type"],
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "find_relevant_files",
+      description:
+        "FAST CODEBASE DISCOVERY. Builds (or refreshes) a structural index of the project — all source files plus the functions, classes, and types they declare — then asks a fast model to pick up to N files most relevant to the query, and a second model to summarize each pick in one sentence. Returns a ranked list of {path, summary, symbols}. Use this BEFORE read_files or code_search whenever you need to figure out which parts of an unfamiliar codebase matter for a request. Much cheaper and faster than greppng around blindly.",
+      parameters: {
+        type: "object",
+        properties: {
+          query: {
+            type: "string",
+            description:
+              "Natural-language description of what you're trying to find or change (e.g. 'where is auth handled', 'files that talk to the Fireworks API').",
+          },
+          max_files: {
+            type: "integer",
+            description: "Maximum number of files to return. Default 12, max 20.",
+          },
+          summarize: {
+            type: "boolean",
+            description:
+              "If true (default), each picked file is also summarized in one sentence. Set false for an even faster pick-only response.",
+          },
+        },
+        required: ["query"],
       },
     },
   },
@@ -868,9 +899,149 @@ export async function executeTool(
         return `error: ${(err as Error).message}`;
       }
     }
+    if (name === "find_relevant_files") {
+      const query = typeof args.query === "string" ? args.query : "";
+      if (!query.trim()) return "error: query is required";
+      const maxFiles = Math.min(Math.max(Number(args.max_files) || 12, 1), 20);
+      const summarize = args.summarize !== false;
+      return await findRelevantFiles(projectRoot, query, maxFiles, summarize);
+    }
     if (name === END_TURN_TOOL) return "(turn ended)";
     return `error: unknown tool ${name}`;
   } catch (err) {
     return `error: ${(err as Error).message}`;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// find_relevant_files implementation
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface PickedFile {
+  path: string;
+  reason?: string;
+}
+
+async function pickFilesWithLLM(
+  query: string,
+  tree: string,
+  maxFiles: number,
+): Promise<PickedFile[]> {
+  const system =
+    "You are a code-search assistant. Given a user query and a compact tree of a project (each file annotated with its top-level functions, classes, and types), pick the files most likely to be relevant to the query. Return ONLY a JSON object of the form {\"files\":[{\"path\":\"<relative-path>\",\"reason\":\"<one short clause>\"}]}. Pick at most the requested number. Prefer fewer, highly-relevant files over many marginally-relevant ones. Do not invent paths — only use paths that appear in the tree.";
+  const user = `Query: ${query}\nMax files: ${maxFiles}\n\nProject tree:\n${tree}`;
+  const res = await callFireworks({
+    model: MODEL_KIMI_K2_6,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+    temperature: 0.1,
+    max_tokens: 1024,
+    response_format: { type: "json_object" },
+  });
+  const raw = res.choices?.[0]?.message?.content ?? "";
+  let parsed: { files?: Array<{ path?: string; reason?: string }> };
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  const out: PickedFile[] = [];
+  for (const f of parsed.files ?? []) {
+    if (typeof f?.path === "string" && f.path.trim()) {
+      out.push({ path: f.path.trim(), reason: typeof f.reason === "string" ? f.reason : undefined });
+      if (out.length >= maxFiles) break;
+    }
+  }
+  return out;
+}
+
+async function summarizeFile(
+  projectRoot: string,
+  relPath: string,
+): Promise<string> {
+  let abs: string;
+  try {
+    abs = safeJoin(projectRoot, relPath);
+  } catch {
+    return "(unreadable path)";
+  }
+  let source: string;
+  try {
+    source = readFileSync(abs, "utf8");
+  } catch {
+    return "(file unreadable)";
+  }
+  // 6k chars is enough for a faithful one-sentence summary on most files.
+  const excerpt = source.length > 6000 ? source.slice(0, 6000) + "\n…[truncated]" : source;
+  const res = await callFireworks({
+    model: MODEL_GLM_5_1,
+    messages: [
+      {
+        role: "system",
+        content:
+          "Summarize the given source file in ONE sentence (<= 30 words) describing its purpose and the main exports. Output only the sentence.",
+      },
+      { role: "user", content: `File: ${relPath}\n\n${excerpt}` },
+    ],
+    temperature: 0.2,
+    max_tokens: 120,
+  });
+  return (res.choices?.[0]?.message?.content ?? "").trim().replace(/\s+/g, " ");
+}
+
+async function findRelevantFiles(
+  projectRoot: string,
+  query: string,
+  maxFiles: number,
+  summarize: boolean,
+): Promise<string> {
+  const t0 = Date.now();
+  const idx = await buildCodeIndex(projectRoot);
+  const stats = indexStats(idx);
+  const tIndex = Date.now() - t0;
+  if (stats.files === 0) {
+    return JSON.stringify({
+      error: "no source files found in project",
+      stats,
+    });
+  }
+  const tree = formatCompactTree(idx);
+  const picked = await pickFilesWithLLM(query, tree, maxFiles);
+  const tPick = Date.now() - t0 - tIndex;
+  const valid = picked.filter((p) => idx.files[p.path]);
+
+  let summaries: string[] = [];
+  if (summarize && valid.length > 0) {
+    summaries = await Promise.all(valid.map((p) => summarizeFile(projectRoot, p.path)));
+  }
+  const tSummary = Date.now() - t0 - tIndex - tPick;
+
+  const results = valid.map((p, i) => ({
+    path: p.path,
+    reason: p.reason,
+    summary: summarize ? summaries[i] : undefined,
+    symbols: idx.files[p.path].symbols.slice(0, 12).map((s) => `${s.kind}:${s.name}`),
+  }));
+
+  return JSON.stringify(
+    {
+      query,
+      stats: {
+        indexed_files: stats.files,
+        indexed_symbols: stats.symbols,
+        by_lang: stats.byLang,
+        index_ms: tIndex,
+        pick_ms: tPick,
+        summary_ms: tSummary,
+      },
+      files: results,
+      ...(picked.length > valid.length
+        ? { warning: `dropped ${picked.length - valid.length} hallucinated paths` }
+        : {}),
+    },
+    null,
+    2,
+  );
 }

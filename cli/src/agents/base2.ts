@@ -347,6 +347,9 @@ ${buildArray(
       // Delegation tools come first and are the primary way Buffy works.
       "spawn_agents",
       "spawn_agent_inline",
+      // Fast structural codebase discovery — prefer this over greppng to find
+      // which files matter for an unfamiliar request.
+      "find_relevant_files",
       // Orchestration / meta tools.
       !isFast && "write_todos",
       !isFast && !noAskUser && "suggest_followups",
