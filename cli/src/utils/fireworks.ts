@@ -126,14 +126,12 @@ export class FireworksError extends Error {
 
 export async function callFireworks(
   req: FireworksRequest,
-  apiKey: string = process.env.FIREWORKS_API_KEY ?? "",
 ): Promise<FireworksResponse> {
   const started = Date.now();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
   };
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   let safeReq = prepareRequest(req);
   let res = await fetch(FIREWORKS_URL, {
     method: "POST",
@@ -199,14 +197,12 @@ export interface StreamResult {
 export async function streamFireworks(
   req: FireworksRequest,
   handlers: StreamHandlers,
-  apiKey: string = process.env.FIREWORKS_API_KEY ?? "",
 ): Promise<StreamResult> {
   const started = Date.now();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "text/event-stream",
   };
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   let safeReq = prepareRequest(req);
   let res = await fetch(FIREWORKS_URL, {
     method: "POST",

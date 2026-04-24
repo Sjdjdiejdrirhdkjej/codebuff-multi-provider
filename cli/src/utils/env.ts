@@ -7,7 +7,6 @@ export interface CliEnv {
   CODEBUFF_AUTH_FILE: string;
   IS_FREEBUFF: boolean;
   LOG_LEVEL: string;
-  FIREWORKS_API_KEY: string;
   FIREWORKS_MODEL_GLM: string;
   FIREWORKS_MODEL_KIMI: string;
 }
@@ -57,7 +56,6 @@ export function getCliEnv(cwd: string = process.cwd()): CliEnv {
       (process.env.IS_FREEBUFF ?? "").toLowerCase() === "true" ||
       process.env.IS_FREEBUFF === "1",
     LOG_LEVEL: process.env.LOG_LEVEL ?? "info",
-    FIREWORKS_API_KEY: process.env.FIREWORKS_API_KEY ?? "",
     FIREWORKS_MODEL_GLM:
       process.env.FIREWORKS_MODEL_GLM ?? "accounts/fireworks/models/glm-5p1",
     FIREWORKS_MODEL_KIMI:

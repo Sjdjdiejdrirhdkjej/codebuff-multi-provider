@@ -14,7 +14,6 @@ import {
   streamFireworks,
 } from "./utils/fireworks.js";
 import { route } from "./utils/router.js";
-import { getCliEnv } from "./utils/env.js";
 import {
   END_TURN_TOOL,
   ToolDef,
@@ -149,14 +148,14 @@ function dispatchSlash(raw: string, projectRoot: string): SlashAction {
       return {
         kind: "reply",
         reply:
-          "You are using the local CLI build. Auth is handled via your FIREWORKS_API_KEY environment variable.",
+          "You are using the local CLI build. No authentication required.",
       };
     case "logout":
     case "signout":
       return {
         kind: "reply",
         reply:
-          "Nothing to log out of in this build. Unset FIREWORKS_API_KEY in your environment to disable model access.",
+          "Nothing to log out of in this build.",
       };
     case "exit":
     case "quit":
@@ -191,8 +190,6 @@ async function streamToBackend(
   onToken: (token: string, kind: "content" | "reasoning") => void,
   onNewRound: () => void,
 ): Promise<{ ok: boolean; error?: string }> {
-  const env = getCliEnv();
-
   // Resolve the active orchestrator agent.
   const agentId = ctx.agentId || MODE_TO_AGENT[ctx.mode];
   const agent = getAgent(agentId) ?? getAgent("base2")!;
@@ -245,7 +242,6 @@ async function streamToBackend(
           tools: toolDefsForAgent,
         },
         { onToken: (t, k) => onToken(t, k ?? "content") },
-        env.FIREWORKS_API_KEY,
       );
 
       if (result.finishReason !== "tool_calls" || result.toolCalls.length === 0) {
