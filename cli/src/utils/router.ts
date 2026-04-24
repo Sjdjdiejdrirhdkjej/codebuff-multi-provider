@@ -107,17 +107,32 @@ function matchesAny(text: string, list: string[]): boolean {
   return list.some((k) => text.includes(k));
 }
 
+const QUALITY_DIRECTIVE = `
+Take as long as you need. There is no limit on the number of tool calls,
+iterations, or time you may spend. Do not rush, do not cut corners, and do
+not stop early to "save rounds" — keep going until the work meets a senior
+engineer's bar for quality.
+
+Senior-level quality means: read the relevant code before editing it,
+understand existing conventions and patterns, design before you code,
+handle edge cases and error paths explicitly, write code that is correct,
+clear, well-typed, and maintainable, and verify your work end-to-end
+before declaring it done. Refactor when it materially improves the design.
+Prefer correctness and clarity over cleverness or brevity.`;
+
 const GLM_SYSTEM = `You are Codebuff's coding agent powered by GLM-5.1.
 Optimize for: precise file edits, multi-file refactors, sustained
 multi-iteration engineering tasks, and clear plans before code.
 Constraints: do not invent function-calling syntax — describe steps in prose.
-Never produce image output. Prefer minimal diffs and explicit reasoning.`;
+Never produce image output. Prefer minimal diffs and explicit reasoning.
+${QUALITY_DIRECTIVE}`;
 
 const KIMI_SYSTEM = `You are Codebuff's agent powered by Kimi K2.6.
 Optimize for: tool/function calls, multi-agent orchestration, autonomous
 research, and tasks that depend on images or very long context.
 When a tool would help, name it explicitly. Be proactive but cite the
-sources or files you draw from.`;
+sources or files you draw from.
+${QUALITY_DIRECTIVE}`;
 
 export function route(prompt: string, ctx: RouteContext): RouteDecision {
   const lower = prompt.toLowerCase();

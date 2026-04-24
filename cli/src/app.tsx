@@ -102,9 +102,8 @@ async function streamToBackend(
     { role: "user", content: prompt },
   ];
 
-  const MAX_ROUNDS = 5;
   try {
-    for (let round = 0; round < MAX_ROUNDS; round++) {
+    for (;;) {
       const result = await streamFireworks(
         {
           model: decision.model,
@@ -144,8 +143,6 @@ async function streamToBackend(
         });
       }
     }
-    onToken(`\n[stopped: hit ${MAX_ROUNDS}-round tool limit]\n`, "content");
-    return { ok: true };
   } catch (err) {
     if (err instanceof FireworksError) {
       return { ok: false, error: `Fireworks ${err.status ?? ""}: ${err.message}` };
