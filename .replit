@@ -19,9 +19,9 @@ args = "Codebuff CLI"
 name = "Codebuff CLI"
 author = "agent"
 
-[[workflows.workflow.tasks]]
-task = "shell.exec"
-args = "cd cli && bun src/index.tsx --help && echo '' && echo '=== CLI ready. Run \"bun cli/src/index.tsx\" in a shell for the interactive TUI. Tailing log file... ===' && mkdir -p $HOME/.codebuff/logs && touch $HOME/.codebuff/logs/cli.log && tail -f $HOME/.codebuff/logs/cli.log"
-
 [workflows.workflow.metadata]
 outputType = "console"
+
+[[workflows.workflow.tasks]]
+task = "shell.exec"
+args = "bun src/index.tsx --help && echo '' && echo '=== CLI ready. Run \"bun src/index.tsx\" in a shell for the interactive TUI. Tailing log file... ===' && mkdir -p $HOME/.codebuff/logs && touch $HOME/.codebuff/logs/cli.log && tail -f $HOME/.codebuff/logs/cli.log"
