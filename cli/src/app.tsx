@@ -50,17 +50,44 @@ const MODE_TO_AGENT: Record<AppMode, string> = {
   PLAN: "base2-plan",
 };
 
-function dispatchSlash(
-  raw: string,
-  projectRoot: string,
-): { reply: string; exit?: boolean } {
+type SlashAction =
+  | { kind: "reply"; reply: string; exit?: boolean }
+  | { kind: "clear" }
+  | { kind: "setMode"; mode: AppMode; reply: string }
+  | { kind: "runShell"; command: string }
+  | { kind: "sendPrompt"; prompt: string; mode?: AppMode; reply?: string };
+
+const MODE_ALIASES: Record<string, AppMode> = {
+  "mode:normal": "NORMAL",
+  "mode:default": "NORMAL",
+  "mode:max": "MAX",
+  "mode:lite": "LITE",
+  "mode:free": "LITE",
+  "mode:plan": "PLAN",
+};
+
+function dispatchSlash(raw: string, projectRoot: string): SlashAction {
+  // Special case: "/!ls" — bang form of /bash with no space
+  const bang = raw.match(/^\/!\s*(.*)$/);
+  if (bang) {
+    const command = bang[1].trim();
+    if (!command) {
+      return { kind: "reply", reply: "Usage: /! <shell command>" };
+    }
+    return { kind: "runShell", command };
+  }
+
   const [cmd, ...rest] = raw.slice(1).split(/\s+/);
-  switch (cmd) {
+  const args = rest.join(" ").trim();
+  const lcmd = cmd.toLowerCase();
+  switch (lcmd) {
     case "help":
-      return { reply: "Available commands:\n" + renderHelp() };
+    case "h":
+    case "?":
+      return { kind: "reply", reply: "Available commands:\n" + renderHelp() };
     case "init": {
       const r = runInit(projectRoot);
-      return { reply: r.message };
+      return { kind: "reply", reply: r.message };
     }
     case "agents": {
       const builtin = Object.values(AGENTS).map(
@@ -69,24 +96,89 @@ function dispatchSlash(
       const local = listAgents().map(
         (a) => `  ${a.id} (${a.source}) - ${a.description}`,
       );
-      return { reply: "Agents:\n" + builtin.concat(local).join("\n") };
+      return {
+        kind: "reply",
+        reply: "Agents:\n" + builtin.concat(local).join("\n"),
+      };
     }
     case "skills": {
       const skills = listSkills();
       return {
+        kind: "reply",
         reply:
-          "Skills:\n" + skills.map((s) => `  ${s.id} - ${s.description}`).join("\n"),
+          "Skills:\n" +
+          skills.map((s) => `  ${s.id} - ${s.description}`).join("\n"),
       };
     }
+    case "new":
+    case "n":
     case "clear":
-      return { reply: "__CLEAR__" };
+    case "c":
+    case "reset":
+      // If the user passed text after /new, send it as the first message of
+      // the fresh chat.
+      if (args) {
+        return { kind: "sendPrompt", prompt: args, reply: "Started a new chat." };
+      }
+      return { kind: "clear" };
+    case "bash":
+      if (!args) {
+        return { kind: "reply", reply: "Usage: /bash <shell command>" };
+      }
+      return { kind: "runShell", command: args };
+    case "plan":
+      if (args) {
+        return {
+          kind: "sendPrompt",
+          prompt: args,
+          mode: "PLAN",
+          reply: "Switched to PLAN mode.",
+        };
+      }
+      return { kind: "setMode", mode: "PLAN", reply: "Switched to PLAN mode." };
+    case "review":
+      return {
+        kind: "sendPrompt",
+        prompt: args
+          ? `Please review the recent changes. Focus: ${args}`
+          : "Please review the recent changes in this project. Spawn a code-reviewer agent if appropriate, then summarize what looks good, what is risky, and any required fixes.",
+      };
+    case "login":
+    case "signin":
+      return {
+        kind: "reply",
+        reply:
+          "You are using the local CLI build. Auth is handled via your FIREWORKS_API_KEY environment variable.",
+      };
+    case "logout":
+    case "signout":
+      return {
+        kind: "reply",
+        reply:
+          "Nothing to log out of in this build. Unset FIREWORKS_API_KEY in your environment to disable model access.",
+      };
     case "exit":
     case "quit":
-      return { reply: "Goodbye.", exit: true };
-    default:
+    case "q":
+      return { kind: "reply", reply: "Goodbye.", exit: true };
+    default: {
+      if (lcmd in MODE_ALIASES) {
+        const newMode = MODE_ALIASES[lcmd];
+        if (args) {
+          return {
+            kind: "sendPrompt",
+            prompt: args,
+            mode: newMode,
+            reply: `Switched to ${newMode} mode.`,
+          };
+        }
+        return { kind: "setMode", mode: newMode, reply: `Switched to ${newMode} mode.` };
+      }
       return {
+        kind: "reply",
         reply: `Unknown command: /${cmd}. Try /help (${HELP_COMMANDS.length} commands).`,
       };
+    }
   }
 }
 
@@ -250,6 +342,7 @@ export function App(props: AppProps): React.ReactElement {
   const [showThinking, setShowThinking] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
   const [expandTools, setExpandTools] = useState(false);
+  const [mode, setMode] = useState<AppMode>(props.initialMode);
 
   // Press Ctrl+T to toggle expand/collapse for all spawn-agents cards.
   useKeyboard((event: { name?: string; sequence?: string; ctrl?: boolean; meta?: boolean }) => {
@@ -266,8 +359,10 @@ export function App(props: AppProps): React.ReactElement {
   }, []);
 
   async function handleSubmit(text: string): Promise<void> {
-    if (text.startsWith("/")) {
-      const cmd = text.slice(1).split(/\s+/)[0];
+    if (text.startsWith("/") || text.startsWith("!")) {
+      // Bare "!cmd" with no leading slash is a quick-bash shortcut.
+      const normalized = text.startsWith("!") ? "/" + text : text;
+      const cmd = normalized.slice(1).split(/\s+/)[0];
       if (cmd === "think") {
         setShowThinking((v) => !v);
         setLines((prev) => [
@@ -280,20 +375,76 @@ export function App(props: AppProps): React.ReactElement {
         ]);
         return;
       }
-      const { reply, exit } = dispatchSlash(text, props.projectRoot);
-      if (reply === "__CLEAR__") {
-        setLines([{ role: "system", text: banner }]);
-      } else {
-        setLines((prev) => [
-          ...prev,
-          { role: "user", text },
-          { role: "system", text: reply },
-        ]);
+      const action = dispatchSlash(normalized, props.projectRoot);
+      switch (action.kind) {
+        case "clear":
+          setLines([{ role: "system", text: banner }]);
+          return;
+        case "reply":
+          setLines((prev) => [
+            ...prev,
+            { role: "user", text },
+            { role: "system", text: action.reply },
+          ]);
+          if (action.exit) setTimeout(() => process.exit(0), 50);
+          return;
+        case "setMode":
+          setMode(action.mode);
+          setLines((prev) => [
+            ...prev,
+            { role: "user", text },
+            { role: "system", text: `${action.reply} (agent: ${MODE_TO_AGENT[action.mode]})` },
+          ]);
+          return;
+        case "runShell": {
+          setLines((prev) => [
+            ...prev,
+            { role: "user", text },
+            { role: "system", text: `$ ${action.command}` },
+          ]);
+          try {
+            const { execSync } = await import("node:child_process");
+            const out = execSync(action.command, {
+              cwd: props.projectRoot,
+              encoding: "utf8",
+              stdio: ["ignore", "pipe", "pipe"],
+              maxBuffer: 4 * 1024 * 1024,
+              timeout: 60_000,
+            });
+            const trimmed = out.length > 8000 ? out.slice(0, 8000) + "\n…(truncated)" : out;
+            setLines((prev) => [
+              ...prev,
+              { role: "system", text: trimmed.trimEnd() || "(no output)" },
+            ]);
+          } catch (err: unknown) {
+            const e = err as { stdout?: Buffer | string; stderr?: Buffer | string; status?: number; message?: string };
+            const stdout = (e.stdout?.toString() ?? "").trimEnd();
+            const stderr = (e.stderr?.toString() ?? "").trimEnd();
+            const msg = [
+              stdout && `stdout:\n${stdout}`,
+              stderr && `stderr:\n${stderr}`,
+              `exit code: ${e.status ?? 1}`,
+              e.message && !stderr ? `error: ${e.message}` : "",
+            ]
+              .filter(Boolean)
+              .join("\n");
+            setLines((prev) => [...prev, { role: "system", text: msg || "(command failed)" }]);
+          }
+          return;
+        }
+        case "sendPrompt":
+          if (action.mode) setMode(action.mode);
+          if (action.reply) {
+            setLines((prev) => [
+              ...prev,
+              { role: "user", text },
+              { role: "system", text: action.reply! },
+            ]);
+          }
+          // Fall through to send `action.prompt` as if the user typed it.
+          text = action.prompt;
+          break;
       }
-      if (exit) {
-        setTimeout(() => process.exit(0), 50);
-      }
-      return;
     }
 
     const history = lines
@@ -346,7 +497,7 @@ export function App(props: AppProps): React.ReactElement {
       {
         projectRoot: props.projectRoot,
         agentId: props.agentId,
-        mode: props.initialMode,
+        mode,
       },
       history,
       (h) => {
