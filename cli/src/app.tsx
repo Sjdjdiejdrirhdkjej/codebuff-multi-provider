@@ -167,9 +167,11 @@ async function streamToBackend(
       let endTurn = false;
       for (const tc of result.toolCalls) {
         const visible = VISIBLE_TOOLS.has(tc.name);
-        if (visible) {
-          onToken(`\n<${tc.name}>${tc.args || ""}</${tc.name}>\n`, "content");
-        }
+        // Always show the tool name + a one-line arg summary, regardless of visibility.
+        onToken(
+          `\n<${tc.name}>${visible ? tc.args || "" : ""}</${tc.name}>\n`,
+          "content",
+        );
         const out = await executeTool(tc.name, tc.args, ctx.projectRoot, {
           parentMessages: messages,
           parentSystemPrompt: systemPromptForAgent,
@@ -407,6 +409,35 @@ type Segment =
 
 const TOOL_RE = /<([a-zA-Z][\w-]*)\b([^>]*?)(?:\/>|>([\s\S]*?)<\/\1\s*>)/g;
 
+const TOOL_LABELS: Record<string, string> = {
+  read_files: "Read Files",
+  read_subtree: "Read Subtree",
+  list_directory: "List Directory",
+  glob: "Glob",
+  code_search: "Code Search",
+  write_file: "Write File",
+  str_replace: "Edit File",
+  run_terminal_command: "Run Command",
+  think_deeply: "Think",
+  spawn_agents: "Spawn Agents",
+  spawn_agent_inline: "Spawn Agent",
+  set_output: "Set Output",
+  add_message: "Add Message",
+  web_search: "Web Search",
+  read_docs: "Read Docs",
+  ask_user: "Ask User",
+  write_todos: "Write Todos",
+  suggest_followups: "Suggest Followups",
+  propose_str_replace: "Propose Edit",
+  propose_write_file: "Propose Write",
+  skill: "Skill",
+  end_turn: "End Turn",
+};
+
+function toolLabel(name: string): string {
+  return TOOL_LABELS[name] ?? name.replace(/_/g, " ");
+}
+
 function parseSegments(input: string): Segment[] {
   const out: Segment[] = [];
   let last = 0;
@@ -489,7 +520,7 @@ function MessageCard({ role, text, reasoning, header }: CardProps): React.ReactE
             paddingRight={1}
           >
             <text fg="magenta" attributes={1}>
-              ⚙ {seg.name}
+              ⚙ {toolLabel(seg.name)}
             </text>
             {seg.summary ? <text fg="gray"> — {seg.summary}</text> : null}
           </box>
