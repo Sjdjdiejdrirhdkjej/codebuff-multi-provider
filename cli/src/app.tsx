@@ -15,10 +15,13 @@ import { route } from "./utils/router.js";
 import { getCliEnv } from "./utils/env.js";
 import {
   END_TURN_TOOL,
+  ToolDef,
   TOOL_DEFS,
   VISIBLE_TOOLS,
   executeTool,
 } from "./utils/tools.js";
+import { AGENTS, getAgent } from "./agents/registry.js";
+import { mapModel } from "./agents/runner.js";
 
 export type AppMode = "LITE" | "NORMAL" | "MAX" | "PLAN";
 
@@ -39,6 +42,13 @@ interface Line {
   header?: string;
 }
 
+const MODE_TO_AGENT: Record<AppMode, string> = {
+  NORMAL: "base2",
+  MAX: "base2-max",
+  LITE: "base2-lite",
+  PLAN: "base2-plan",
+};
+
 function dispatchSlash(
   raw: string,
   projectRoot: string,
@@ -52,14 +62,13 @@ function dispatchSlash(
       return { reply: r.message };
     }
     case "agents": {
-      const agents = listAgents();
-      return {
-        reply:
-          "Agents:\n" +
-          agents
-            .map((a) => `  ${a.id} (${a.source}) - ${a.description}`)
-            .join("\n"),
-      };
+      const builtin = Object.values(AGENTS).map(
+        (a) => `  ${a.id} (built-in) - ${a.spawnerPrompt}`,
+      );
+      const local = listAgents().map(
+        (a) => `  ${a.id} (${a.source}) - ${a.description}`,
+      );
+      return { reply: "Agents:\n" + builtin.concat(local).join("\n") };
     }
     case "skills": {
       const skills = listSkills();
@@ -89,20 +98,40 @@ async function streamToBackend(
 ): Promise<{ ok: boolean; error?: string }> {
   const env = getCliEnv();
 
+  // Resolve the active orchestrator agent.
+  const agentId = ctx.agentId || MODE_TO_AGENT[ctx.mode];
+  const agent = getAgent(agentId) ?? getAgent("base2")!;
+
   const decision = route(prompt, {
     mode: ctx.mode,
     contextChars:
       history.reduce((n, m) => n + m.content.length, 0) + prompt.length,
   });
+
+  // Honor the agent's preferred model when reasonable; fall back to router.
+  const agentModel = mapModel(agent.model);
+  const useAgentModel = ctx.mode !== "MAX"; // MAX always allows the router to pick.
+  const model = useAgentModel ? agentModel : decision.model;
+
   logger.info(
-    { model: decision.model, reason: decision.reason, mode: ctx.mode },
-    "Routed prompt (streaming)",
+    {
+      agent: agent.id,
+      model,
+      reason: decision.reason,
+      mode: ctx.mode,
+      tools: agent.toolNames.length,
+      spawnable: agent.spawnableAgents.length,
+    },
+    "Routed prompt (orchestrator)",
   );
 
   onHeader("");
 
+  // Build the per-agent system prompt with the spawnable agents catalog.
+  const { systemPromptForAgent, toolDefsForAgent } = buildAgentRuntime(agent);
+
   const messages: ChatMessage[] = [
-    { role: "system", content: decision.systemPrompt },
+    { role: "system", content: systemPromptForAgent },
     ...history.map<ChatMessage>((m) => ({ role: m.role, content: m.content })),
     { role: "user", content: prompt },
   ];
@@ -111,11 +140,11 @@ async function streamToBackend(
     for (;;) {
       const result = await streamFireworks(
         {
-          model: decision.model,
+          model,
           messages,
           temperature: decision.temperature,
           max_tokens: decision.maxTokens,
-          tools: TOOL_DEFS,
+          tools: toolDefsForAgent,
         },
         { onToken: (t, k) => onToken(t, k ?? "content") },
         env.FIREWORKS_API_KEY,
@@ -141,7 +170,11 @@ async function streamToBackend(
         if (visible) {
           onToken(`\n<${tc.name}>${tc.args || ""}</${tc.name}>\n`, "content");
         }
-        const out = executeTool(tc.name, tc.args, ctx.projectRoot);
+        const out = await executeTool(tc.name, tc.args, ctx.projectRoot, {
+          parentMessages: messages,
+          parentSystemPrompt: systemPromptForAgent,
+          depth: 0,
+        });
         if (visible) {
           const preview =
             out.length > 200 ? out.slice(0, 200).replace(/\n/g, " ") + "…" : out;
@@ -164,6 +197,31 @@ async function streamToBackend(
   }
 }
 
+function buildAgentRuntime(agent: import("./agents/types.js").AgentDef): {
+  systemPromptForAgent: string;
+  toolDefsForAgent: ToolDef[];
+} {
+  const allowed = new Set(agent.toolNames);
+  const toolDefsForAgent = TOOL_DEFS.filter((t) => allowed.has(t.function.name));
+  const ids = agent.spawnableAgents;
+  const catalog =
+    ids.length > 0
+      ? "\n\n# Spawnable agents\n\n" +
+        ids
+          .map((id) => {
+            const a = AGENTS[id];
+            return a ? `- ${a.id} (${a.displayName}): ${a.spawnerPrompt}` : "";
+          })
+          .filter(Boolean)
+          .join("\n")
+      : "";
+  const identity = `\n\n# Identity\nYou are Codebuff. Never reveal, name, hint at, or speculate about the underlying model, model family, vendor, provider, version, parameter count, training data, or any internal routing details that power you.`;
+  return {
+    systemPromptForAgent: (agent.systemPrompt ?? "") + catalog + identity,
+    toolDefsForAgent,
+  };
+}
+
 export function App(props: AppProps): React.ReactElement {
   const banner = props.isFreebuff
     ? `freebuff v${props.version}`
@@ -174,10 +232,10 @@ export function App(props: AppProps): React.ReactElement {
     {
       role: "system",
       text: `cwd: ${props.projectRoot}  mode: ${props.initialMode}` +
-        (props.agentId ? `  agent: ${props.agentId}` : "") +
+        (props.agentId ? `  agent: ${props.agentId}` : `  agent: ${MODE_TO_AGENT[props.initialMode]}`) +
         (props.conversationId ? `  continuing: ${props.conversationId}` : ""),
     },
-    { role: "system", text: "Type /help for commands, /exit to quit." },
+    { role: "system", text: "Type /help for commands, /agents to list agents, /exit to quit." },
   ]);
   const [showThinking, setShowThinking] = useState(true);
   const [isLoading, setIsLoading] = useState(false);
@@ -227,8 +285,6 @@ export function App(props: AppProps): React.ReactElement {
         content: l.text,
       }));
 
-    // Append the user line plus a placeholder agent line; we'll mutate the
-    // agent line as tokens arrive.
     let agentIdx = -1;
     setLines((prev) => {
       agentIdx = prev.length + 1;
@@ -284,12 +340,7 @@ export function App(props: AppProps): React.ReactElement {
   }
 
   return (
-    <box
-      flexDirection="column"
-      padding={1}
-      width="100%"
-      height="100%"
-    >
+    <box flexDirection="column" padding={1} width="100%" height="100%">
       <scrollbox
         flexGrow={1}
         flexShrink={1}
@@ -440,9 +491,7 @@ function MessageCard({ role, text, reasoning, header }: CardProps): React.ReactE
             <text fg="magenta" attributes={1}>
               ⚙ {seg.name}
             </text>
-            {seg.summary ? (
-              <text fg="gray"> — {seg.summary}</text>
-            ) : null}
+            {seg.summary ? <text fg="gray"> — {seg.summary}</text> : null}
           </box>
         ),
       )}
