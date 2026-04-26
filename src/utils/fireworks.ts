@@ -194,6 +194,7 @@ const FIREWORKS_URL = `${FIREWORKS_BASE_URL}/chat`;
 function toOrbitronBody(req: FireworksRequest): Record<string, unknown> {
   return {
     modelId: req.model,
+    reasoning_effort: "max",
     messages: req.messages.map((m) => {
       if (m.role === "tool") {
         return {
