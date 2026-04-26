@@ -534,6 +534,8 @@ export interface ExecuteToolContext {
   parentMessages?: ChatMessage[];
   parentSystemPrompt?: string;
   depth?: number;
+  /** Optional live-streaming callback threaded to sub-agents and inline agents. */
+  onToken?: (chunk: string) => void;
 }
 
 export async function executeTool(
@@ -862,6 +864,8 @@ export async function executeTool(
         list.map(async (a) => {
           const spec = a as { agent_type?: string; prompt?: string; params?: Record<string, unknown> };
           if (!spec.agent_type) return { agent_type: "?", error: "missing agent_type" };
+          // Emit a labeled header so the user knows which agent is streaming.
+          ctx.onToken?.(`\n[${spec.agent_type}] `);
           try {
             const out = await runAgent({
               agentId: spec.agent_type,
@@ -871,9 +875,12 @@ export async function executeTool(
               parentMessages: ctx.parentMessages,
               parentSystemPrompt: ctx.parentSystemPrompt,
               depth: ctx.depth ?? 0,
+              onToken: (chunk) => ctx.onToken?.(chunk),
             });
+            ctx.onToken?.(`\n`);
             return { agent_type: spec.agent_type, output: out };
           } catch (err) {
+            ctx.onToken?.(`\n`);
             return { agent_type: spec.agent_type, error: (err as Error).message };
           }
         }),
@@ -884,6 +891,7 @@ export async function executeTool(
       const spec = args as { agent_type?: string; prompt?: string; params?: Record<string, unknown> };
       if (!spec.agent_type) return "error: agent_type is required";
       const { runAgent } = await import("../agents/runner.js");
+      ctx.onToken?.(`\n[${spec.agent_type}] `);
       try {
         const out = await runAgent({
           agentId: spec.agent_type,
@@ -893,9 +901,12 @@ export async function executeTool(
           parentMessages: ctx.parentMessages,
           parentSystemPrompt: ctx.parentSystemPrompt,
           depth: ctx.depth ?? 0,
+          onToken: (chunk) => ctx.onToken?.(chunk),
         });
+        ctx.onToken?.(`\n`);
         return out;
       } catch (err) {
+        ctx.onToken?.(`\n`);
         return `error: ${(err as Error).message}`;
       }
     }

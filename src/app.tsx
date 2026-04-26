@@ -278,6 +278,8 @@ async function streamToBackend(
           parentMessages: messages,
           parentSystemPrompt: systemPromptForAgent,
           depth: 0,
+          // Sub-agent tokens stream clean round-text into the parent body in real-time.
+          onToken: (chunk) => onToken(chunk, "content"),
         });
         if (tc.name === "spawn_agents") {
           // Emit a paired result block so the card can show agent outputs on expand.

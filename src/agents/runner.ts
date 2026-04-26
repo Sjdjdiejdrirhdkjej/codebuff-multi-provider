@@ -1,7 +1,7 @@
 import { logger } from "../utils/logger.js";
 import {
   ChatMessage,
-  callFireworks,
+  streamFireworks,
 } from "../utils/fireworks.js";
 import {
   MODEL_GLM_5_1,
@@ -47,6 +47,8 @@ export interface RunAgentOptions {
   parentSystemPrompt?: string;
   /** Recursion depth for safety. */
   depth?: number;
+  /** Optional live-streaming callback — receives tokens as they are generated. */
+  onToken?: (chunk: string) => void;
 }
 
 const MAX_DEPTH = 6;
@@ -124,21 +126,26 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
     const stepMessages: ChatMessage[] = agent.stepPrompt
       ? [...messages, { role: "system", content: agent.stepPrompt }]
       : messages;
-    const res = await callFireworks({
-      model: fireworksModel,
-      messages: stepMessages,
-      temperature: 0.3,
-      max_tokens: 4096,
-      ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
-    });
-    const choice = res.choices?.[0];
-    if (!choice) break;
-    const msg = choice.message;
-    const content = typeof msg.content === "string" ? msg.content : "";
-    if (content) lastAssistantText = content;
+    const result = await streamFireworks(
+      {
+        model: fireworksModel,
+        messages: stepMessages,
+        temperature: 0.3,
+        max_tokens: 4096,
+        ...(toolDefs.length > 0 ? { tools: toolDefs } : {}),
+      },
+      // No per-token callback here — we emit the clean round text below so
+      // JSON tool-call objects never leak into the parent's visible stream.
+    );
+    const content = result.cleanText;
+    if (content) {
+      lastAssistantText = content;
+      // Emit the clean reasoning text for this round to the parent stream.
+      opts.onToken?.(content);
+    }
 
-    const toolCalls = msg.tool_calls ?? [];
-    if (toolCalls.length === 0 || choice.finish_reason !== "tool_calls") {
+    const toolCalls = result.toolCalls;
+    if (toolCalls.length === 0 || result.finishReason !== "tool_calls") {
       break;
     }
     // Echo the assistant message (with tool calls) into history.
@@ -148,18 +155,19 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
       tool_calls: toolCalls.map((tc) => ({
         id: tc.id,
         type: "function" as const,
-        function: { name: tc.function.name, arguments: tc.function.arguments },
+        function: { name: tc.name, arguments: tc.args ?? "{}" },
       })),
     });
 
     let endTurn = false;
     for (const tc of toolCalls) {
-      const name = tc.function.name;
-      const args = tc.function.arguments || "{}";
+      const name = tc.name;
+      const args = tc.args ?? "{}";
       const out = await executeTool(name, args, opts.projectRoot, {
         parentMessages: messages,
         parentSystemPrompt: systemPrompt,
         depth: depth + 1,
+        onToken: opts.onToken,
       });
       if (name === "set_output") {
         setOutputText = typeof out === "string" ? out : JSON.stringify(out);
