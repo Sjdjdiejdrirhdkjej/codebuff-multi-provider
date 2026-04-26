@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { logger } from "./logger.js";
+import { getAuthToken, getApiClientAuthToken } from "./auth.js";
 
 // The Replit environment uses an internal proxy with a private Root CA that is
 // not in Bun's or Node.js's built-in trust stores. We load the system CA bundle
