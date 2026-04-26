@@ -25,3 +25,16 @@ outputType = "console"
 [[workflows.workflow.tasks]]
 task = "shell.exec"
 args = "bun src/index.tsx --help && echo '' && echo '=== CLI ready. Run \"bun src/index.tsx\" in a shell for the interactive TUI. Tailing log file... ===' && mkdir -p $HOME/.codebuff/logs && touch $HOME/.codebuff/logs/cli.log && tail -f $HOME/.codebuff/logs/cli.log"
+
+[nix]
+channel = "stable-25_05"
+
+[userenv]
+
+[userenv.shared]
+CODEBUFF_CLI_VERSION = "0.1.0-dev"
+CODEBUFF_API_URL = "https://orbitron--pastelsjuice8t.replit.app"
+IS_FREEBUFF = "false"
+LOG_LEVEL = "info"
+FIREWORKS_MODEL_GLM = "claude-opus-4.7"
+FIREWORKS_MODEL_KIMI = "claude-opus-4.7"
