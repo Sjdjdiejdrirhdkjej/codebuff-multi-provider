@@ -113,18 +113,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
 
   let lastAssistantText = "";
   let setOutputText: string | null = null;
-  let rounds = 0;
-  // Tracks consecutive rounds with no tool calls so we can re-prompt the model
-  // rather than silently stopping before end_turn is called.
-  let noToolRounds = 0;
-  const MAX_NO_TOOL_ROUNDS = 3;
 
   for (;;) {
-    rounds += 1;
-    if (rounds > 60) {
-      logger.warn({ agentId: agent.id }, "sub-agent exceeded 60 rounds; stopping");
-      break;
-    }
     // Re-inject the stepPrompt as a transient system reminder each turn so
     // long-running orchestrators don't drift away from delegation/parallelism.
     const stepMessages: ChatMessage[] = agent.stepPrompt
@@ -150,12 +140,8 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
 
     const toolCalls = result.toolCalls;
     if (toolCalls.length === 0) {
-      // Model produced text without tool calls. Re-prompt it to call end_turn
-      // or continue, unless we've exhausted retries.
-      noToolRounds++;
-      if (noToolRounds >= MAX_NO_TOOL_ROUNDS) {
-        break;
-      }
+      // Model produced text without tool calls — re-prompt it to call end_turn
+      // or continue with its next tool call.
       if (content) {
         messages.push({ role: "assistant", content });
       }
