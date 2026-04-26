@@ -54,70 +54,97 @@ interface InternalToolDef {
   };
 }
 
-/** Convert tool definitions into an XML section injected into the system prompt. */
+/** Convert tool definitions into a section injected into the system prompt. */
 function buildToolsSystemSection(tools: InternalToolDef[]): string {
   if (tools.length === 0) return "";
   const catalog = tools
-    .map((t) =>
-      [
-        `<tool_definition>`,
-        `<name>${t.function.name}</name>`,
-        `<description>${t.function.description}</description>`,
-        `<parameters_schema>${JSON.stringify(t.function.parameters)}</parameters_schema>`,
-        `</tool_definition>`,
-      ].join("\n"),
-    )
+    .map((t) => {
+      const params = t.function.parameters as {
+        properties?: Record<string, { type?: string; description?: string }>;
+        required?: string[];
+      };
+      const props = params.properties ?? {};
+      const required = new Set(params.required ?? []);
+      const argLines = Object.entries(props)
+        .map(([k, v]) => `    "${k}"${required.has(k) ? " (required)" : ""}: ${v.type ?? "string"} — ${v.description ?? ""}`)
+        .join("\n");
+      return `- **${t.function.name}**: ${t.function.description}${argLines ? `\n  Args:\n${argLines}` : ""}`;
+    })
     .join("\n");
   return (
-    "\n\n# Available Tools\n\n" +
-    "You can call tools by outputting XML tags in your response. Use this exact format:\n" +
-    "<TOOL_NAME>{\"arg\": \"value\"}</TOOL_NAME>\n\n" +
-    "Rules:\n" +
-    "- Tool name must exactly match one of the names listed below.\n" +
-    "- Arguments must be valid JSON matching the parameters schema.\n" +
-    "- Output one or more tool calls in your response, then stop. You will receive the results before continuing.\n" +
-    "- Do NOT invent tool names. Only use the tools listed here.\n\n" +
-    "<available_tools>\n" +
-    catalog +
-    "\n</available_tools>"
+    "\n\n# Tools\n\n" +
+    "You have access to tools. To call a tool, output a JSON object on its own line in this exact format:\n" +
+    '{"name": "tool_name", "input": {"arg1": "value1"}}\n\n' +
+    "You may output multiple tool call objects. After outputting tool calls, stop — results will be returned to you.\n\n" +
+    "Available tools:\n" +
+    catalog
   );
 }
 
-/** Append the tools XML section to the system message (or prepend a new one). */
+/** Inject the tools section as a dedicated second system message to avoid clamping the primary prompt. */
 function injectToolsIntoMessages(
   messages: ChatMessage[],
   toolsSection: string,
 ): ChatMessage[] {
   if (!toolsSection) return messages;
   const out = messages.slice();
+  // Insert as a second system message right after the first, to avoid
+  // hitting the per-message character clamp on the primary system prompt.
   const sysIdx = out.findIndex((m) => m.role === "system");
-  if (sysIdx >= 0) {
-    out[sysIdx] = { ...out[sysIdx], content: (out[sysIdx].content ?? "") + toolsSection };
-  } else {
-    out.unshift({ role: "system", content: toolsSection });
-  }
+  const insertAt = sysIdx >= 0 ? sysIdx + 1 : 0;
+  out.splice(insertAt, 0, { role: "system", content: toolsSection.trim() });
   return out;
 }
 
-/** Parse XML-format tool calls from model text output. */
+/** Extract all balanced JSON objects from text. */
+function extractJsonObjects(text: string): unknown[] {
+  const results: unknown[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (text[i] !== "{") continue;
+    let depth = 0;
+    let inStr = false;
+    let esc = false;
+    let j = i;
+    for (; j < text.length; j++) {
+      const c = text[j];
+      if (esc) { esc = false; continue; }
+      if (c === "\\" && inStr) { esc = true; continue; }
+      if (c === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (c === "{") depth++;
+      else if (c === "}") {
+        depth--;
+        if (depth === 0) {
+          try { results.push(JSON.parse(text.slice(i, j + 1))); } catch { /* skip */ }
+          break;
+        }
+      }
+    }
+    i = j;
+  }
+  return results;
+}
+
+/** Parse tool calls from model text — handles {"name": "...", "input": {...}} JSON format. */
 function parseXmlToolCalls(text: string, toolNames: Set<string>): ToolCall[] {
   const calls: ToolCall[] = [];
-  const re = /<([A-Za-z][A-Za-z0-9_-]*?)>([\s\S]*?)<\/\1>/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    const name = m[1];
-    const raw = m[2].trim();
-    if (!toolNames.has(name)) continue;
-    try {
-      JSON.parse(raw || "{}");
-    } catch {
-      continue;
+  for (const obj of extractJsonObjects(text)) {
+    if (
+      obj !== null &&
+      typeof obj === "object" &&
+      "name" in obj &&
+      typeof (obj as Record<string, unknown>).name === "string" &&
+      "input" in obj &&
+      typeof (obj as Record<string, unknown>).input === "object"
+    ) {
+      const name = (obj as Record<string, unknown>).name as string;
+      if (!toolNames.has(name)) continue;
+      calls.push({
+        id: `call-${Date.now()}-${calls.length}`,
+        name,
+        args: JSON.stringify((obj as Record<string, unknown>).input ?? {}),
+      });
     }
-    calls.push({
-      id: `xml-${Date.now()}-${calls.length}`,
-      name,
-      args: raw || "{}",
-    });
   }
   return calls;
 }
