@@ -312,6 +312,7 @@ function secureFetch(url: string, init: RequestInit): Promise<Response> {
 
 interface OrbitronStreamSummary {
   text: string;
+  thinkingText: string;
   inputTokens?: number;
   outputTokens?: number;
   finishReason: string | null;
@@ -320,35 +321,81 @@ interface OrbitronStreamSummary {
 /**
  * Consume Orbitron's custom SSE stream.
  * Events look like:  `data: {"delta":"hello"}`  ...  `data: {"done":true, ...}`
- * Calls onDelta for every text chunk; returns the assembled text + usage.
+ *
+ * Splits `<think>…</think>` blocks from regular content in real-time:
+ *  - Regular content → onDelta (accumulated into summary.text)
+ *  - Thinking content → onThinkingDelta (accumulated into summary.thinkingText)
+ * Also handles an optional `thinking_delta` SSE field from the gateway.
  */
 async function consumeOrbitronStream(
   res: Response,
   onDelta?: (chunk: string) => void,
+  onThinkingDelta?: (chunk: string) => void,
 ): Promise<OrbitronStreamSummary> {
   if (!res.body) throw new FireworksError("Orbitron returned empty body");
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
-  let buf = "";
+  let sseBuf = "";
   let text = "";
+  let thinkingText = "";
   let inputTokens: number | undefined;
   let outputTokens: number | undefined;
   let finishReason: string | null = null;
 
+  // ── Streaming <think>…</think> parser ──────────────────────────────────────
+  // We buffer potential partial tags (up to tag-length - 1 chars) before
+  // flushing so a tag split across multiple deltas is handled correctly.
+  let parseBuf = "";
+  let inThink = false;
+
+  function flushChunk(raw: string) {
+    parseBuf += raw;
+    while (parseBuf.length > 0) {
+      if (!inThink) {
+        const idx = parseBuf.indexOf("<think>");
+        if (idx === -1) {
+          // No opening tag yet — safe to emit everything except the last 6 chars
+          // (max partial prefix length of "<think>").
+          const safe = parseBuf.slice(0, Math.max(0, parseBuf.length - 6));
+          if (safe) { text += safe; onDelta?.(safe); parseBuf = parseBuf.slice(safe.length); }
+          break;
+        }
+        const before = parseBuf.slice(0, idx);
+        if (before) { text += before; onDelta?.(before); }
+        parseBuf = parseBuf.slice(idx + 7); // consume "<think>"
+        inThink = true;
+      } else {
+        const idx = parseBuf.indexOf("</think>");
+        if (idx === -1) {
+          // Still inside think — keep last 7 chars (max partial "</think>" prefix).
+          const safe = parseBuf.slice(0, Math.max(0, parseBuf.length - 7));
+          if (safe) { thinkingText += safe; onThinkingDelta?.(safe); parseBuf = parseBuf.slice(safe.length); }
+          break;
+        }
+        const inside = parseBuf.slice(0, idx);
+        if (inside) { thinkingText += inside; onThinkingDelta?.(inside); }
+        parseBuf = parseBuf.slice(idx + 8); // consume "</think>"
+        inThink = false;
+      }
+    }
+  }
+  // ───────────────────────────────────────────────────────────────────────────
+
   while (true) {
     const { done, value } = await reader.read();
     if (done) break;
-    buf += decoder.decode(value, { stream: true });
+    sseBuf += decoder.decode(value, { stream: true });
     let idx: number;
-    while ((idx = buf.indexOf("\n")) !== -1) {
-      const line = buf.slice(0, idx).trim();
-      buf = buf.slice(idx + 1);
+    while ((idx = sseBuf.indexOf("\n")) !== -1) {
+      const line = sseBuf.slice(0, idx).trim();
+      sseBuf = sseBuf.slice(idx + 1);
       if (!line.startsWith("data:")) continue;
       const data = line.slice(5).trim();
       if (!data || data === "[DONE]") continue;
       try {
         const parsed = JSON.parse(data) as {
           delta?: string;
+          thinking_delta?: string;
           done?: boolean;
           inputTokens?: number;
           outputTokens?: number;
@@ -361,9 +408,14 @@ async function consumeOrbitronStream(
             : parsed.error.message ?? "Orbitron stream error";
           throw new FireworksError(msg);
         }
+        // Explicit thinking field from gateway (e.g. when extended thinking is enabled).
+        if (typeof parsed.thinking_delta === "string" && parsed.thinking_delta.length > 0) {
+          thinkingText += parsed.thinking_delta;
+          onThinkingDelta?.(parsed.thinking_delta);
+        }
+        // Regular delta — route through the <think> tag parser.
         if (typeof parsed.delta === "string" && parsed.delta.length > 0) {
-          text += parsed.delta;
-          onDelta?.(parsed.delta);
+          flushChunk(parsed.delta);
         }
         if (parsed.done) {
           inputTokens = parsed.inputTokens;
@@ -376,7 +428,14 @@ async function consumeOrbitronStream(
       }
     }
   }
-  return { text, inputTokens, outputTokens, finishReason: finishReason ?? "stop" };
+
+  // Flush any remaining buffered chars.
+  if (parseBuf.length > 0) {
+    if (inThink) { thinkingText += parseBuf; onThinkingDelta?.(parseBuf); }
+    else { text += parseBuf; onDelta?.(parseBuf); }
+  }
+
+  return { text, thinkingText, inputTokens, outputTokens, finishReason: finishReason ?? "stop" };
 }
 
 async function postOrbitron(req: FireworksRequest): Promise<Response> {
@@ -485,8 +544,10 @@ export interface StreamHandlers {
 export interface StreamResult {
   finishReason: string | null;
   toolCalls: ToolCall[];
-  /** Model response text with JSON tool-call objects stripped out. */
+  /** Model response text with JSON tool-call objects and <think> blocks stripped out. */
   cleanText: string;
+  /** Content of all <think>…</think> blocks emitted by the model. */
+  reasoningText: string;
 }
 
 export async function streamFireworks(
@@ -503,10 +564,16 @@ export async function streamFireworks(
   const started = Date.now();
   const res = await postOrbitron({ ...req, messages });
   let fullText = "";
-  const summary = await consumeOrbitronStream(res, (delta) => {
-    fullText += delta;
-    handlers.onToken(delta, "content");
-  });
+  const summary = await consumeOrbitronStream(
+    res,
+    (delta) => {
+      fullText += delta;
+      handlers.onToken(delta, "content");
+    },
+    (thinking) => {
+      handlers.onToken(thinking, "reasoning");
+    },
+  );
   logger.info(
     {
       model: req.model,
@@ -529,5 +596,5 @@ export async function streamFireworks(
   );
 
   handlers.onDone?.(finishReason);
-  return { finishReason, toolCalls, cleanText };
+  return { finishReason, toolCalls, cleanText, reasoningText: summary.thinkingText };
 }
