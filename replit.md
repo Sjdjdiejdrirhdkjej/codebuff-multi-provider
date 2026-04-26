@@ -33,5 +33,15 @@ The TUI itself must be run from a real terminal (it needs a TTY for raw-mode inp
 
 ## AI backend
 
-Calls `https://fireworks-endpoint--57crestcrepe.replit.app` — no API key required.
-Uses GLM-5.1 and Kimi K2.6 models via Fireworks AI with strength-based routing.
+Calls the **Orbitron** gateway at `https://orbitron--pastelsjuice8t.replit.app/api/chat`.
+
+- Auth: `Bearer ${ORBITRON_API_KEY}` (key format `sk-sb-v1-…`, stored as Replit secret).
+- Wire format: `POST { modelId, messages }`; response is always a custom SSE
+  stream of `data: {"delta":"…"}` events terminated by `data: {"done":true,…}`.
+  The client (`src/utils/fireworks.ts`) translates this to/from the OpenAI-shaped
+  interface the rest of the codebase expects.
+- Model: **`claude-opus-4.7`** — the same model
+  [codebuff.com's CLI uses in Default mode](https://www.codebuff.com/docs/tips/modes).
+  Both router buckets (`MODEL_GLM_5_1`, `MODEL_KIMI_K2_6`) resolve to it.
+- Tool/function calling and JSON mode are not supported by the gateway and are
+  stripped from outbound requests.

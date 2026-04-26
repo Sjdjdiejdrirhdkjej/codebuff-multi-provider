@@ -58,6 +58,25 @@ export interface FireworksResponse {
 const FIREWORKS_HOST = "https://orbitron--pastelsjuice8t.replit.app";
 const FIREWORKS_BASE_URL = `${FIREWORKS_HOST}/api`;
 const FIREWORKS_URL = `${FIREWORKS_BASE_URL}/chat`;
+
+/**
+ * Build the wire-format body Orbitron expects.
+ *
+ * Orbitron's `/api/chat` endpoint takes `{ modelId, messages }` (NOT OpenAI's
+ * `model`/`tools`/`response_format`/etc.) and always responds with a custom
+ * SSE stream of `data: {"delta":"..."}` events terminated by
+ * `data: {"done":true, ...}`. Tool-calling, JSON-mode, and other OpenAI
+ * extensions are not supported by the gateway, so we strip them.
+ */
+function toOrbitronBody(req: FireworksRequest): Record<string, unknown> {
+  return {
+    modelId: req.model,
+    messages: req.messages.map((m) => ({
+      role: m.role === "tool" ? "user" : m.role,
+      content: m.content ?? "",
+    })),
+  };
+}
 export const EXA_SEARCH_URL = `${FIREWORKS_HOST}/api/exa/search`;
 export const EXA_ANSWER_URL = `${FIREWORKS_HOST}/api/exa/answer`;
 export const EXA_CONTENTS_URL = `${FIREWORKS_HOST}/api/exa/contents`;
@@ -159,62 +178,150 @@ function secureFetch(url: string, init: RequestInit): Promise<Response> {
   return fetch(url, init);
 }
 
-export async function callFireworks(
-  req: FireworksRequest,
-): Promise<FireworksResponse> {
-  const started = Date.now();
+interface OrbitronStreamSummary {
+  text: string;
+  inputTokens?: number;
+  outputTokens?: number;
+  finishReason: string | null;
+}
+
+/**
+ * Consume Orbitron's custom SSE stream.
+ * Events look like:  `data: {"delta":"hello"}`  ...  `data: {"done":true, ...}`
+ * Calls onDelta for every text chunk; returns the assembled text + usage.
+ */
+async function consumeOrbitronStream(
+  res: Response,
+  onDelta?: (chunk: string) => void,
+): Promise<OrbitronStreamSummary> {
+  if (!res.body) throw new FireworksError("Orbitron returned empty body");
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buf = "";
+  let text = "";
+  let inputTokens: number | undefined;
+  let outputTokens: number | undefined;
+  let finishReason: string | null = null;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buf += decoder.decode(value, { stream: true });
+    let idx: number;
+    while ((idx = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, idx).trim();
+      buf = buf.slice(idx + 1);
+      if (!line.startsWith("data:")) continue;
+      const data = line.slice(5).trim();
+      if (!data || data === "[DONE]") continue;
+      try {
+        const parsed = JSON.parse(data) as {
+          delta?: string;
+          done?: boolean;
+          inputTokens?: number;
+          outputTokens?: number;
+          finishReason?: string;
+          error?: { message?: string } | string;
+        };
+        if (parsed.error) {
+          const msg = typeof parsed.error === "string"
+            ? parsed.error
+            : parsed.error.message ?? "Orbitron stream error";
+          throw new FireworksError(msg);
+        }
+        if (typeof parsed.delta === "string" && parsed.delta.length > 0) {
+          text += parsed.delta;
+          onDelta?.(parsed.delta);
+        }
+        if (parsed.done) {
+          inputTokens = parsed.inputTokens;
+          outputTokens = parsed.outputTokens;
+          finishReason = parsed.finishReason ?? "stop";
+        }
+      } catch (err) {
+        if (err instanceof FireworksError) throw err;
+        /* ignore malformed chunks */
+      }
+    }
+  }
+  return { text, inputTokens, outputTokens, finishReason: finishReason ?? "stop" };
+}
+
+async function postOrbitron(req: FireworksRequest): Promise<Response> {
   const apiKey = getOrbitronApiKey();
+  if (!apiKey) {
+    throw new FireworksError(
+      "ORBITRON_API_KEY is not set. Get a key at https://orbitron--pastelsjuice8t.replit.app/keys and export it.",
+    );
+  }
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    Accept: "application/json",
+    Accept: "text/event-stream",
+    Authorization: `Bearer ${apiKey}`,
   };
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   let safeReq = prepareRequest(req);
   let res = await secureFetch(FIREWORKS_URL, {
     method: "POST",
     headers,
-    body: JSON.stringify(safeReq),
+    body: JSON.stringify(toOrbitronBody(safeReq)),
   });
-
   if (res.status === 413) {
     safeReq = prepareRequest({ ...safeReq, messages: aggressivelyTrim(safeReq.messages) });
     res = await secureFetch(FIREWORKS_URL, {
       method: "POST",
       headers,
-      body: JSON.stringify(safeReq),
+      body: JSON.stringify(toOrbitronBody(safeReq)),
     });
   }
-
-  const text = await res.text();
   if (!res.ok) {
+    const text = await res.text().catch(() => "");
     logger.error(
       { status: res.status, body: text.slice(0, 500), model: req.model },
-      "Fireworks API error",
+      "Orbitron API error",
     );
     throw new FireworksError(
-      `Fireworks API ${res.status}: ${text.slice(0, 200)}`,
+      `Orbitron API ${res.status}: ${text.slice(0, 200)}`,
       res.status,
       text,
     );
   }
+  return res;
+}
 
-  let parsed: FireworksResponse;
-  try {
-    parsed = JSON.parse(text) as FireworksResponse;
-  } catch (err) {
-    throw new FireworksError(`Invalid JSON from Fireworks: ${err}`);
-  }
-
+export async function callFireworks(
+  req: FireworksRequest,
+): Promise<FireworksResponse> {
+  const started = Date.now();
+  const res = await postOrbitron(req);
+  const summary = await consumeOrbitronStream(res);
   logger.info(
     {
       model: req.model,
       ms: Date.now() - started,
-      usage: parsed.usage,
-      finish: parsed.choices?.[0]?.finish_reason,
+      inputTokens: summary.inputTokens,
+      outputTokens: summary.outputTokens,
+      finish: summary.finishReason,
     },
-    "Fireworks call complete",
+    "Orbitron call complete",
   );
-  return parsed;
+  return {
+    id: `orbitron-${Date.now()}`,
+    model: req.model,
+    choices: [
+      {
+        index: 0,
+        message: { role: "assistant", content: summary.text },
+        finish_reason: summary.finishReason ?? "stop",
+      },
+    ],
+    usage: summary.inputTokens != null && summary.outputTokens != null
+      ? {
+          prompt_tokens: summary.inputTokens,
+          completion_tokens: summary.outputTokens,
+          total_tokens: summary.inputTokens + summary.outputTokens,
+        }
+      : undefined,
+  };
 }
 
 export type TokenKind = "content" | "reasoning";
@@ -234,107 +341,21 @@ export async function streamFireworks(
   handlers: StreamHandlers,
 ): Promise<StreamResult> {
   const started = Date.now();
-  const apiKey = getOrbitronApiKey();
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    Accept: "text/event-stream",
-  };
-  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
-  let safeReq = prepareRequest(req);
-  let res = await secureFetch(FIREWORKS_URL, {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ ...safeReq, stream: true }),
+  const res = await postOrbitron(req);
+  const summary = await consumeOrbitronStream(res, (delta) => {
+    handlers.onToken(delta, "content");
   });
-
-  if (res.status === 413) {
-    safeReq = prepareRequest({ ...safeReq, messages: aggressivelyTrim(safeReq.messages) });
-    res = await secureFetch(FIREWORKS_URL, {
-      method: "POST",
-      headers,
-      body: JSON.stringify({ ...safeReq, stream: true }),
-    });
-  }
-
-  if (!res.ok || !res.body) {
-    const text = await res.text().catch(() => "");
-    throw new FireworksError(
-      `Fireworks API ${res.status}: ${text.slice(0, 200)}`,
-      res.status,
-      text,
-    );
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buf = "";
-  let finishReason: string | null = null;
-  const pendingTools = new Map<number, ToolCall>();
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buf += decoder.decode(value, { stream: true });
-
-    // Parse SSE: events separated by \n\n, each line "data: <json>" or "data: [DONE]".
-    let idx: number;
-    while ((idx = buf.indexOf("\n\n")) !== -1) {
-      const event = buf.slice(0, idx);
-      buf = buf.slice(idx + 2);
-      for (const line of event.split("\n")) {
-        if (!line.startsWith("data:")) continue;
-        const data = line.slice(5).trim();
-        if (!data || data === "[DONE]") continue;
-        try {
-          const parsed = JSON.parse(data) as {
-            choices?: Array<{
-              delta?: {
-                content?: string;
-                reasoning_content?: string;
-                tool_calls?: Array<{
-                  index?: number;
-                  function?: { name?: string | null; arguments?: string | null };
-                }>;
-              };
-              finish_reason?: string | null;
-            }>;
-          };
-          const choice = parsed.choices?.[0];
-          if (choice?.delta?.content) handlers.onToken(choice.delta.content, "content");
-          if (choice?.delta?.reasoning_content)
-            handlers.onToken(choice.delta.reasoning_content, "reasoning");
-          if (choice?.delta?.tool_calls) {
-            for (const tc of choice.delta.tool_calls as Array<{
-              index?: number;
-              id?: string;
-              function?: { name?: string | null; arguments?: string | null };
-            }>) {
-              const idx = tc.index ?? 0;
-              const cur = pendingTools.get(idx) ?? { id: "", name: "", args: "" };
-              if (tc.id) cur.id = tc.id;
-              if (tc.function?.name) cur.name = tc.function.name;
-              if (tc.function?.arguments) cur.args += tc.function.arguments;
-              pendingTools.set(idx, cur);
-            }
-          }
-          if (choice?.finish_reason) finishReason = choice.finish_reason;
-        } catch {
-          /* ignore malformed chunks */
-        }
-      }
-    }
-  }
-
-  const toolCalls = Array.from(pendingTools.values()).filter((t) => t.name);
   logger.info(
     {
       model: req.model,
       ms: Date.now() - started,
-      finish: finishReason,
-      tools: toolCalls.length,
+      inputTokens: summary.inputTokens,
+      outputTokens: summary.outputTokens,
+      finish: summary.finishReason,
     },
-    "Fireworks stream complete",
+    "Orbitron stream complete",
   );
-  handlers.onDone?.(finishReason);
-  return { finishReason, toolCalls };
+  handlers.onDone?.(summary.finishReason);
+  // Orbitron's API does not expose native function/tool calls.
+  return { finishReason: summary.finishReason, toolCalls: [] };
 }
