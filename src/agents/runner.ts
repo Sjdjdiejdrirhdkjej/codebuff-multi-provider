@@ -114,6 +114,10 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
   let lastAssistantText = "";
   let setOutputText: string | null = null;
   let rounds = 0;
+  // Tracks consecutive rounds with no tool calls so we can re-prompt the model
+  // rather than silently stopping before end_turn is called.
+  let noToolRounds = 0;
+  const MAX_NO_TOOL_ROUNDS = 3;
 
   for (;;) {
     rounds += 1;
@@ -145,9 +149,27 @@ export async function runAgent(opts: RunAgentOptions): Promise<string> {
     }
 
     const toolCalls = result.toolCalls;
-    if (toolCalls.length === 0 || result.finishReason !== "tool_calls") {
-      break;
+    if (toolCalls.length === 0) {
+      // Model produced text without tool calls. Re-prompt it to call end_turn
+      // or continue, unless we've exhausted retries.
+      noToolRounds++;
+      if (noToolRounds >= MAX_NO_TOOL_ROUNDS) {
+        break;
+      }
+      if (content) {
+        messages.push({ role: "assistant", content });
+      }
+      messages.push({
+        role: "user",
+        content:
+          "If you have finished the task, please call the end_turn tool now. " +
+          "Otherwise, continue with your next tool call.",
+      });
+      continue;
     }
+
+    // Tool calls found — reset the no-tool counter.
+    noToolRounds = 0;
     // Echo the assistant message (with tool calls) into history.
     messages.push({
       role: "assistant",

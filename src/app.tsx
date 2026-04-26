@@ -231,6 +231,11 @@ async function streamToBackend(
 
   try {
     let round = 0;
+    // Counts consecutive rounds where the model returned no tool calls.
+    // After MAX_NO_TOOL_ROUNDS we give up to avoid infinite loops.
+    let noToolRounds = 0;
+    const MAX_NO_TOOL_ROUNDS = 3;
+
     for (;;) {
       if (round > 0) onNewRound();
       round++;
@@ -252,9 +257,29 @@ async function streamToBackend(
         onReplaceBody(result.cleanText);
       }
 
-      if (result.finishReason !== "tool_calls" || result.toolCalls.length === 0) {
-        return { ok: true };
+      if (result.toolCalls.length === 0) {
+        // Model returned plain text without calling any tools (and without end_turn).
+        // Per the system prompt the model is always supposed to call end_turn when
+        // finished, so re-prompt it unless we've already retried too many times.
+        noToolRounds++;
+        if (noToolRounds >= MAX_NO_TOOL_ROUNDS) {
+          return { ok: true };
+        }
+        if (result.cleanText) {
+          messages.push({ role: "assistant", content: result.cleanText });
+        }
+        messages.push({
+          role: "user",
+          content:
+            "If you have finished the task, please call the end_turn tool now. " +
+            "Otherwise, continue with your next tool call.",
+        });
+        // Continue the loop — model will get another chance.
+        continue;
       }
+
+      // Tool calls found — reset the no-tool counter.
+      noToolRounds = 0;
 
       messages.push({
         role: "assistant",
