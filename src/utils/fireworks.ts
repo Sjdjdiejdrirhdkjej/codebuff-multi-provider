@@ -96,9 +96,9 @@ function injectToolsIntoMessages(
   return out;
 }
 
-/** Extract all balanced JSON objects from text. */
-function extractJsonObjects(text: string): unknown[] {
-  const results: unknown[] = [];
+/** Extract all balanced JSON objects from text, with their start/end positions. */
+function extractJsonObjects(text: string): Array<{ start: number; end: number; obj: unknown }> {
+  const results: Array<{ start: number; end: number; obj: unknown }> = [];
   for (let i = 0; i < text.length; i++) {
     if (text[i] !== "{") continue;
     let depth = 0;
@@ -115,7 +115,7 @@ function extractJsonObjects(text: string): unknown[] {
       else if (c === "}") {
         depth--;
         if (depth === 0) {
-          try { results.push(JSON.parse(text.slice(i, j + 1))); } catch { /* skip */ }
+          try { results.push({ start: i, end: j + 1, obj: JSON.parse(text.slice(i, j + 1)) }); } catch { /* skip */ }
           break;
         }
       }
@@ -125,10 +125,19 @@ function extractJsonObjects(text: string): unknown[] {
   return results;
 }
 
-/** Parse tool calls from model text — handles {"name": "...", "input": {...}} JSON format. */
-function parseXmlToolCalls(text: string, toolNames: Set<string>): ToolCall[] {
+export interface ParsedToolCalls {
+  calls: ToolCall[];
+  /** The original text with JSON tool-call objects removed. */
+  cleanText: string;
+}
+
+/** Parse tool calls from model text — handles {"name": "...", "input": {...}} JSON format.
+ *  Also returns the text with the tool-call JSON objects stripped out. */
+function parseXmlToolCalls(text: string, toolNames: Set<string>): ParsedToolCalls {
   const calls: ToolCall[] = [];
-  for (const obj of extractJsonObjects(text)) {
+  const removeRanges: Array<{ start: number; end: number }> = [];
+
+  for (const { start, end, obj } of extractJsonObjects(text)) {
     if (
       obj !== null &&
       typeof obj === "object" &&
@@ -144,9 +153,18 @@ function parseXmlToolCalls(text: string, toolNames: Set<string>): ToolCall[] {
         name,
         args: JSON.stringify((obj as Record<string, unknown>).input ?? {}),
       });
+      removeRanges.push({ start, end });
     }
   }
-  return calls;
+
+  // Build clean text by removing the JSON tool-call objects (process in reverse to preserve offsets).
+  let cleanText = text;
+  for (const { start, end } of [...removeRanges].reverse()) {
+    cleanText = cleanText.slice(0, start) + cleanText.slice(end);
+  }
+  cleanText = cleanText.replace(/\n{3,}/g, "\n\n").trim();
+
+  return { calls, cleanText };
 }
 
 export interface FireworksResponse {
@@ -466,6 +484,8 @@ export interface StreamHandlers {
 export interface StreamResult {
   finishReason: string | null;
   toolCalls: ToolCall[];
+  /** Model response text with JSON tool-call objects stripped out. */
+  cleanText: string;
 }
 
 export async function streamFireworks(
@@ -497,14 +517,16 @@ export async function streamFireworks(
     "Orbitron stream complete",
   );
 
-  const toolCalls = toolNames.size > 0 ? parseXmlToolCalls(fullText, toolNames) : [];
+  const { calls: toolCalls, cleanText } = toolNames.size > 0
+    ? parseXmlToolCalls(fullText, toolNames)
+    : { calls: [], cleanText: fullText };
   const finishReason = toolCalls.length > 0 ? "tool_calls" : (summary.finishReason ?? "stop");
 
   logger.info(
-    { toolNamesAvailable: [...toolNames], toolCallsFound: toolCalls.length, fullResponse: fullText },
-    "Parsed tool calls from stream",
+    { toolCallsFound: toolCalls.length },
+    "Orbitron tool calls parsed",
   );
 
   handlers.onDone?.(finishReason);
-  return { finishReason, toolCalls };
+  return { finishReason, toolCalls, cleanText };
 }

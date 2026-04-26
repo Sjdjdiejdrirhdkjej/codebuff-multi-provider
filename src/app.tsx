@@ -189,6 +189,7 @@ async function streamToBackend(
   onHeader: (header: string) => void,
   onToken: (token: string, kind: "content" | "reasoning") => void,
   onNewRound: () => void,
+  onReplaceBody: (text: string) => void,
 ): Promise<{ ok: boolean; error?: string }> {
   // Resolve the active orchestrator agent.
   const agentId = ctx.agentId || MODE_TO_AGENT[ctx.mode];
@@ -244,13 +245,20 @@ async function streamToBackend(
         { onToken: (t, k) => onToken(t, k ?? "content") },
       );
 
+      // Strip raw JSON tool-call objects from the visible body and replace with
+      // the clean reasoning text. The formatted <tc.name>…</tc.name> blocks are
+      // emitted below via onToken so parseSegments can render them as tool cards.
+      if (result.toolCalls.length > 0) {
+        onReplaceBody(result.cleanText);
+      }
+
       if (result.finishReason !== "tool_calls" || result.toolCalls.length === 0) {
         return { ok: true };
       }
 
       messages.push({
         role: "assistant",
-        content: "",
+        content: result.cleanText,
         tool_calls: result.toolCalls.map((tc) => ({
           id: tc.id,
           type: "function",
@@ -569,6 +577,11 @@ export function App(props: AppProps): React.ReactElement {
         }
       },
       startNewRound,
+      (newText) => {
+        // Replace the current body with clean text (JSON tool-call objects stripped).
+        body = newText;
+        patchAgent({ text: body });
+      },
     );
 
     setIsLoading(false);
