@@ -44,6 +44,84 @@ export interface FireworksRequest {
   tools?: unknown[];
 }
 
+/** Minimal tool-def shape used locally — avoids circular imports with tools.ts. */
+interface InternalToolDef {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: Record<string, unknown>;
+  };
+}
+
+/** Convert tool definitions into an XML section injected into the system prompt. */
+function buildToolsSystemSection(tools: InternalToolDef[]): string {
+  if (tools.length === 0) return "";
+  const catalog = tools
+    .map((t) =>
+      [
+        `<tool_definition>`,
+        `<name>${t.function.name}</name>`,
+        `<description>${t.function.description}</description>`,
+        `<parameters_schema>${JSON.stringify(t.function.parameters)}</parameters_schema>`,
+        `</tool_definition>`,
+      ].join("\n"),
+    )
+    .join("\n");
+  return (
+    "\n\n# Available Tools\n\n" +
+    "You can call tools by outputting XML tags in your response. Use this exact format:\n" +
+    "<TOOL_NAME>{\"arg\": \"value\"}</TOOL_NAME>\n\n" +
+    "Rules:\n" +
+    "- Tool name must exactly match one of the names listed below.\n" +
+    "- Arguments must be valid JSON matching the parameters schema.\n" +
+    "- Output one or more tool calls in your response, then stop. You will receive the results before continuing.\n" +
+    "- Do NOT invent tool names. Only use the tools listed here.\n\n" +
+    "<available_tools>\n" +
+    catalog +
+    "\n</available_tools>"
+  );
+}
+
+/** Append the tools XML section to the system message (or prepend a new one). */
+function injectToolsIntoMessages(
+  messages: ChatMessage[],
+  toolsSection: string,
+): ChatMessage[] {
+  if (!toolsSection) return messages;
+  const out = messages.slice();
+  const sysIdx = out.findIndex((m) => m.role === "system");
+  if (sysIdx >= 0) {
+    out[sysIdx] = { ...out[sysIdx], content: (out[sysIdx].content ?? "") + toolsSection };
+  } else {
+    out.unshift({ role: "system", content: toolsSection });
+  }
+  return out;
+}
+
+/** Parse XML-format tool calls from model text output. */
+function parseXmlToolCalls(text: string, toolNames: Set<string>): ToolCall[] {
+  const calls: ToolCall[] = [];
+  const re = /<([A-Za-z][A-Za-z0-9_-]*?)>([\s\S]*?)<\/\1>/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const name = m[1];
+    const raw = m[2].trim();
+    if (!toolNames.has(name)) continue;
+    try {
+      JSON.parse(raw || "{}");
+    } catch {
+      continue;
+    }
+    calls.push({
+      id: `xml-${Date.now()}-${calls.length}`,
+      name,
+      args: raw || "{}",
+    });
+  }
+  return calls;
+}
+
 export interface FireworksResponse {
   id: string;
   model: string;
@@ -71,10 +149,18 @@ const FIREWORKS_URL = `${FIREWORKS_BASE_URL}/chat`;
 function toOrbitronBody(req: FireworksRequest): Record<string, unknown> {
   return {
     modelId: req.model,
-    messages: req.messages.map((m) => ({
-      role: m.role === "tool" ? "user" : m.role,
-      content: m.content ?? "",
-    })),
+    messages: req.messages.map((m) => {
+      if (m.role === "tool") {
+        return {
+          role: "user",
+          content: `[Tool result]\n${m.content ?? ""}`,
+        };
+      }
+      return {
+        role: m.role,
+        content: m.content ?? "",
+      };
+    }),
   };
 }
 export const EXA_SEARCH_URL = `${FIREWORKS_HOST}/api/exa/search`;
@@ -291,8 +377,15 @@ async function postOrbitron(req: FireworksRequest): Promise<Response> {
 export async function callFireworks(
   req: FireworksRequest,
 ): Promise<FireworksResponse> {
+  const tools = (req.tools ?? []) as InternalToolDef[];
+  const toolNames = new Set(tools.map((t) => t.function.name));
+  const toolsSection = buildToolsSystemSection(tools);
+  const messages = toolsSection
+    ? injectToolsIntoMessages(req.messages, toolsSection)
+    : req.messages;
+
   const started = Date.now();
-  const res = await postOrbitron(req);
+  const res = await postOrbitron({ ...req, messages });
   const summary = await consumeOrbitronStream(res);
   logger.info(
     {
@@ -304,14 +397,26 @@ export async function callFireworks(
     },
     "Orbitron call complete",
   );
+
+  const toolCalls = toolNames.size > 0 ? parseXmlToolCalls(summary.text, toolNames) : [];
+  const finishReason = toolCalls.length > 0 ? "tool_calls" : (summary.finishReason ?? "stop");
+
   return {
     id: `orbitron-${Date.now()}`,
     model: req.model,
     choices: [
       {
         index: 0,
-        message: { role: "assistant", content: summary.text },
-        finish_reason: summary.finishReason ?? "stop",
+        message: {
+          role: "assistant",
+          content: summary.text,
+          tool_calls: toolCalls.map((tc) => ({
+            id: tc.id,
+            type: "function" as const,
+            function: { name: tc.name, arguments: tc.args },
+          })),
+        },
+        finish_reason: finishReason,
       },
     ],
     usage: summary.inputTokens != null && summary.outputTokens != null
@@ -340,9 +445,18 @@ export async function streamFireworks(
   req: FireworksRequest,
   handlers: StreamHandlers,
 ): Promise<StreamResult> {
+  const tools = (req.tools ?? []) as InternalToolDef[];
+  const toolNames = new Set(tools.map((t) => t.function.name));
+  const toolsSection = buildToolsSystemSection(tools);
+  const messages = toolsSection
+    ? injectToolsIntoMessages(req.messages, toolsSection)
+    : req.messages;
+
   const started = Date.now();
-  const res = await postOrbitron(req);
+  const res = await postOrbitron({ ...req, messages });
+  let fullText = "";
   const summary = await consumeOrbitronStream(res, (delta) => {
+    fullText += delta;
     handlers.onToken(delta, "content");
   });
   logger.info(
@@ -355,7 +469,10 @@ export async function streamFireworks(
     },
     "Orbitron stream complete",
   );
-  handlers.onDone?.(summary.finishReason);
-  // Orbitron's API does not expose native function/tool calls.
-  return { finishReason: summary.finishReason, toolCalls: [] };
+
+  const toolCalls = toolNames.size > 0 ? parseXmlToolCalls(fullText, toolNames) : [];
+  const finishReason = toolCalls.length > 0 ? "tool_calls" : (summary.finishReason ?? "stop");
+
+  handlers.onDone?.(finishReason);
+  return { finishReason, toolCalls };
 }
