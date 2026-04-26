@@ -2,8 +2,8 @@
 
 Interactive terminal AI coding assistant. Built with TypeScript, React, and
 [OpenTUI](https://github.com/anomalyco/opentui), running on
-[Bun](https://bun.sh). Routes prompts to **GLM-5.1** or **Kimi K2.6** on
-[Fireworks AI](https://fireworks.ai) based on each model's strengths.
+[Bun](https://bun.sh). Routes prompts to **GLM-5.1** or **Claude Opus 4.7** via
+codebuff.com's backend based on each model's strengths.
 
 ## Install
 
@@ -18,11 +18,7 @@ bun add -g codebuff-tui
 bun add codebuff-tui
 ```
 
-Set your Fireworks key:
-
-```sh
-export FIREWORKS_API_KEY=fw_your_key_here
-```
+No API key required — the CLI calls codebuff.com's hosted backend by default.
 
 ## Run
 
@@ -59,21 +55,21 @@ The router maps each prompt to whichever model's **strengths** apply.
 
 | Trigger | Model | Why only that model |
 |---|---|---|
-| Image input or vision keywords | **Kimi K2.6** | Only model with native multimodal |
-| Function/tool calling needed | **Kimi K2.6** | GLM-5.1 lacks function calling |
-| Multi-agent / orchestration / autonomous research | **Kimi K2.6** | Built for swarm orchestration |
-| Context > 180k chars | **Kimi K2.6** | 262k window vs GLM's 202k |
+| Image input or vision keywords | **Claude Opus 4.7** | Only model with native multimodal |
+| Function/tool calling needed | **Claude Opus 4.7** | GLM-5.1 lacks function calling |
+| Multi-agent / orchestration / autonomous research | **Claude Opus 4.7** | Built for swarm orchestration |
+| Context > 180k chars | **Claude Opus 4.7** | 262k window vs GLM's 202k |
 | Code / refactor / debug / plan / MAX / PLAN modes | **GLM-5.1** | Sustained multi-iteration coding |
 | Default chat | **GLM-5.1** | Cheaper + faster on code-shaped chat |
 
-Responses stream live token-by-token via Fireworks' SSE endpoint.
+Responses stream live token-by-token via the backend's SSE endpoint.
 
 ## Configuration
 
 ```sh
-FIREWORKS_API_KEY=fw_…
-FIREWORKS_MODEL_GLM=accounts/fireworks/models/glm-5p1     # default
-FIREWORKS_MODEL_KIMI=accounts/fireworks/models/kimi-k2p6  # default
+CODEBUFF_API_URL=https://orbitron--pastelsjuice8t.replit.app  # default
+FIREWORKS_MODEL_GLM=z-ai/glm-5.1                              # default
+FIREWORKS_MODEL_KIMI=anthropic/claude-opus-4.7                # default
 LOG_LEVEL=info
 ```
 

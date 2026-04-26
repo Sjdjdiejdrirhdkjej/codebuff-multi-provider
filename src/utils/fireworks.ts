@@ -55,7 +55,7 @@ export interface FireworksResponse {
   usage?: { prompt_tokens: number; completion_tokens: number; total_tokens: number };
 }
 
-const FIREWORKS_HOST = "https://fireworks-endpoint--57crestcrepe.replit.app";
+const FIREWORKS_HOST = "https://orbitron--pastelsjuice8t.replit.app";
 const FIREWORKS_BASE_URL = `${FIREWORKS_HOST}/api/v1`;
 const FIREWORKS_URL = `${FIREWORKS_BASE_URL}/chat/completions`;
 export const EXA_SEARCH_URL = `${FIREWORKS_HOST}/api/exa/search`;

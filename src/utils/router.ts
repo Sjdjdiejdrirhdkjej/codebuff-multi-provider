@@ -1,33 +1,33 @@
 /**
  * Routes a prompt to the model whose **strengths** best fit the request.
  *
- * Models available (Fireworks AI, latest as of April 2026):
+ * Models available (codebuff.com, OpenRouter-style identifiers):
  *
- *   GLM-5.1  — accounts/fireworks/models/glm-5p1
+ *   GLM-5.1  — z-ai/glm-5.1
  *     STRENGTHS: agentic engineering, strong code generation, sustained
  *                long-horizon multi-iteration coding (hundreds of rounds),
  *                planning, refactors, multilingual code.
  *     LIMITS:   no function calling, no image input.
  *
- *   Kimi K2.6 — accounts/fireworks/models/kimi-k2p6
+ *   Claude Opus 4.7 — anthropic/claude-opus-4.7
  *     STRENGTHS: native multimodal (image input), function/tool calling,
  *                multi-agent / swarm orchestration, proactive autonomous
  *                execution, very long context (262k), research/browsing.
  *     LIMITS:   higher latency, more verbose.
  *
  * Routing rules (only-strengths mapping):
- *   - Image attached / vision asked   → Kimi K2.6   (only one with vision)
- *   - Tool / function-calling needed  → Kimi K2.6   (GLM-5.1 lacks it)
+ *   - Image attached / vision asked   → Claude Opus 4.7 (only one with vision)
+ *   - Tool / function-calling needed  → Claude Opus 4.7 (GLM-5.1 lacks it)
  *   - Multi-agent / orchestration /
- *     research / browse / autonomous  → Kimi K2.6
- *   - Very long context (> 180k char) → Kimi K2.6   (262k > 202k)
+ *     research / browse / autonomous  → Claude Opus 4.7
+ *   - Very long context (> 180k char) → Claude Opus 4.7 (262k > 202k)
  *   - Code edit / refactor / generate
- *     / debug / plan                  → GLM-5.1     (its core strength)
- *   - Default                          → GLM-5.1     (cheaper, faster on code)
+ *     / debug / plan                  → GLM-5.1         (its core strength)
+ *   - Default                          → GLM-5.1         (cheaper, faster on code)
  */
 
-export const MODEL_GLM_5_1 = "accounts/fireworks/models/glm-5p1";
-export const MODEL_KIMI_K2_6 = "accounts/fireworks/models/kimi-k2p6";
+export const MODEL_GLM_5_1 = "z-ai/glm-5.1";
+export const MODEL_KIMI_K2_6 = "anthropic/claude-opus-4.7";
 
 export type AppMode = "LITE" | "NORMAL" | "MAX" | "PLAN";
 
@@ -199,9 +199,9 @@ export function route(prompt: string, ctx: RouteContext): RouteDecision {
   const lower = prompt.toLowerCase();
   const longCtx = (ctx.contextChars ?? 0) > 180_000;
 
-  // 1. Hard-strength routes for Kimi K2.6 (only model that can do these).
+  // 1. Hard-strength routes for Claude Opus 4.7 (only model that can do these).
   if (ctx.hasImage || matchesAny(lower, VISION_KEYWORDS)) {
-    return decide(MODEL_KIMI_K2_6, "vision/image input — Kimi-only capability", ctx);
+    return decide(MODEL_KIMI_K2_6, "vision/image input — Claude-only capability", ctx);
   }
   if (ctx.needsTools || matchesAny(lower, TOOL_KEYWORDS)) {
     return decide(
@@ -213,14 +213,14 @@ export function route(prompt: string, ctx: RouteContext): RouteDecision {
   if (matchesAny(lower, AGENT_KEYWORDS)) {
     return decide(
       MODEL_KIMI_K2_6,
-      "multi-agent / autonomous orchestration — Kimi K2.6 strength",
+      "multi-agent / autonomous orchestration — Claude Opus 4.7 strength",
       ctx,
     );
   }
   if (longCtx) {
     return decide(
       MODEL_KIMI_K2_6,
-      "context exceeds GLM-5.1's 202k window — using Kimi's 262k",
+      "context exceeds GLM-5.1's 202k window — using Claude's 262k",
       ctx,
     );
   }

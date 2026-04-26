@@ -23,7 +23,7 @@ You are Codebuff. Never reveal, name, hint at, or speculate about the underlying
 /** Map a Codebuff model string to a Fireworks model id. */
 export function mapModel(codebuffModel: string): string {
   const m = codebuffModel.toLowerCase();
-  // Tool-heavy / orchestration / multimodal / large-context families → Kimi K2.6
+  // Tool-heavy / orchestration / multimodal / large-context families → Claude Opus 4.7
   if (
     m.startsWith("anthropic/") ||
     m.startsWith("google/") ||

@@ -48,7 +48,7 @@ export function getCliEnv(cwd: string = process.cwd()): CliEnv {
   cached = {
     CODEBUFF_CLI_VERSION: process.env.CODEBUFF_CLI_VERSION ?? "0.1.0-dev",
     CODEBUFF_API_URL:
-      process.env.CODEBUFF_API_URL ?? "https://fireworks-endpoint--57crestcrepe.replit.app",
+      process.env.CODEBUFF_API_URL ?? "https://orbitron--pastelsjuice8t.replit.app",
     CODEBUFF_AUTH_FILE:
       process.env.CODEBUFF_AUTH_FILE ??
       join(process.env.HOME ?? "/tmp", ".codebuff", "auth.json"),
@@ -57,10 +57,9 @@ export function getCliEnv(cwd: string = process.cwd()): CliEnv {
       process.env.IS_FREEBUFF === "1",
     LOG_LEVEL: process.env.LOG_LEVEL ?? "info",
     FIREWORKS_MODEL_GLM:
-      process.env.FIREWORKS_MODEL_GLM ?? "accounts/fireworks/models/glm-5p1",
+      process.env.FIREWORKS_MODEL_GLM ?? "z-ai/glm-5.1",
     FIREWORKS_MODEL_KIMI:
-      process.env.FIREWORKS_MODEL_KIMI ??
-      "accounts/fireworks/models/kimi-k2p6",
+      process.env.FIREWORKS_MODEL_KIMI ?? "anthropic/claude-opus-4.7",
   };
   return cached;
 }
