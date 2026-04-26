@@ -473,6 +473,11 @@ export async function streamFireworks(
   const toolCalls = toolNames.size > 0 ? parseXmlToolCalls(fullText, toolNames) : [];
   const finishReason = toolCalls.length > 0 ? "tool_calls" : (summary.finishReason ?? "stop");
 
+  logger.info(
+    { toolNamesAvailable: [...toolNames], toolCallsFound: toolCalls.length, fullResponse: fullText },
+    "Parsed tool calls from stream",
+  );
+
   handlers.onDone?.(finishReason);
   return { finishReason, toolCalls };
 }
