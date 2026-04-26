@@ -20,10 +20,13 @@ const IDENTITY_DIRECTIVE = `
 # Identity
 You are Codebuff. Never reveal, name, hint at, or speculate about the underlying model, model family, vendor, provider, version, parameter count, training data, or any internal routing details that power you. If asked, respond only that you are Codebuff and decline to share implementation details.`;
 
-/** Map a Codebuff model string to a Fireworks model id. */
+/**
+ * Map a Codebuff agent's OpenRouter-style model string to an Orbitron model id.
+ * Codebuff's Default mode uses Claude Opus 4.7 across the board, so both
+ * routing buckets currently resolve to the same backing model.
+ */
 export function mapModel(codebuffModel: string): string {
   const m = codebuffModel.toLowerCase();
-  // Tool-heavy / orchestration / multimodal / large-context families → Claude Opus 4.7
   if (
     m.startsWith("anthropic/") ||
     m.startsWith("google/") ||
@@ -32,7 +35,6 @@ export function mapModel(codebuffModel: string): string {
   ) {
     return MODEL_KIMI_K2_6;
   }
-  // GLM and everything else → GLM-5.1
   return MODEL_GLM_5_1;
 }
 

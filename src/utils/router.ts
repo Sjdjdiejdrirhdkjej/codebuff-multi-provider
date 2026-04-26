@@ -1,33 +1,22 @@
 /**
- * Routes a prompt to the model whose **strengths** best fit the request.
+ * Routes a prompt to the model used by codebuff.com's CLI in the matching mode.
  *
- * Models available (codebuff.com, OpenRouter-style identifiers):
+ * Per https://www.codebuff.com/docs/tips/modes:
+ *   Default / Max / Plan → Claude Opus 4.7
+ *   Lite                  → GLM 5.1
  *
- *   GLM-5.1  — z-ai/glm-5.1
+ * The Orbitron gateway exposes Anthropic / OpenAI / Google models with bare
+ * IDs (no provider prefix) and does not host GLM, so Lite/free mode falls
+ * back to claude-opus-4.7 as well.
+ *
+ *   Claude Opus 4.7 — claude-opus-4.7  (codebuff Default-mode model)
  *     STRENGTHS: agentic engineering, strong code generation, sustained
- *                long-horizon multi-iteration coding (hundreds of rounds),
- *                planning, refactors, multilingual code.
- *     LIMITS:   no function calling, no image input.
- *
- *   Claude Opus 4.7 — anthropic/claude-opus-4.7
- *     STRENGTHS: native multimodal (image input), function/tool calling,
- *                multi-agent / swarm orchestration, proactive autonomous
- *                execution, very long context (262k), research/browsing.
- *     LIMITS:   higher latency, more verbose.
- *
- * Routing rules (only-strengths mapping):
- *   - Image attached / vision asked   → Claude Opus 4.7 (only one with vision)
- *   - Tool / function-calling needed  → Claude Opus 4.7 (GLM-5.1 lacks it)
- *   - Multi-agent / orchestration /
- *     research / browse / autonomous  → Claude Opus 4.7
- *   - Very long context (> 180k char) → Claude Opus 4.7 (262k > 202k)
- *   - Code edit / refactor / generate
- *     / debug / plan                  → GLM-5.1         (its core strength)
- *   - Default                          → GLM-5.1         (cheaper, faster on code)
+ *                long-horizon multi-iteration coding, planning, refactors,
+ *                vision input, function/tool calling. 200k context.
  */
 
-export const MODEL_GLM_5_1 = "z-ai/glm-5.1";
-export const MODEL_KIMI_K2_6 = "anthropic/claude-opus-4.7";
+export const MODEL_GLM_5_1 = "claude-opus-4.7";
+export const MODEL_KIMI_K2_6 = "claude-opus-4.7";
 
 export type AppMode = "LITE" | "NORMAL" | "MAX" | "PLAN";
 
@@ -199,43 +188,43 @@ export function route(prompt: string, ctx: RouteContext): RouteDecision {
   const lower = prompt.toLowerCase();
   const longCtx = (ctx.contextChars ?? 0) > 180_000;
 
-  // 1. Hard-strength routes for Claude Opus 4.7 (only model that can do these).
+  // 1. Routes that benefit from GPT-5.1 (deep reasoning / long context / heavy tools).
   if (ctx.hasImage || matchesAny(lower, VISION_KEYWORDS)) {
-    return decide(MODEL_KIMI_K2_6, "vision/image input — Claude-only capability", ctx);
+    return decide(MODEL_KIMI_K2_6, "vision/image input — GPT-5.1 multimodal", ctx);
   }
   if (ctx.needsTools || matchesAny(lower, TOOL_KEYWORDS)) {
     return decide(
       MODEL_KIMI_K2_6,
-      "tool / function calling — GLM-5.1 does not support it",
+      "tool / function calling — GPT-5.1 strength",
       ctx,
     );
   }
   if (matchesAny(lower, AGENT_KEYWORDS)) {
     return decide(
       MODEL_KIMI_K2_6,
-      "multi-agent / autonomous orchestration — Claude Opus 4.7 strength",
+      "multi-agent / autonomous orchestration — GPT-5.1 strength",
       ctx,
     );
   }
   if (longCtx) {
     return decide(
       MODEL_KIMI_K2_6,
-      "context exceeds GLM-5.1's 202k window — using Claude's 262k",
+      "context exceeds Claude Opus's 200k window — using GPT-5.1's 400k",
       ctx,
     );
   }
 
-  // 2. Coding / planning → GLM-5.1's core strength.
+  // 2. Coding / planning → Claude Opus 4.6 (codebuff's default-mode editor).
   if (
     ctx.mode === "PLAN" ||
     ctx.mode === "MAX" ||
     matchesAny(lower, CODE_KEYWORDS)
   ) {
-    return decide(MODEL_GLM_5_1, "coding / planning — GLM-5.1 strength", ctx);
+    return decide(MODEL_GLM_5_1, "coding / planning — Claude Opus 4.6 strength", ctx);
   }
 
-  // 3. Default: GLM-5.1 (cheaper, faster on code-shaped chat).
-  return decide(MODEL_GLM_5_1, "default route — GLM-5.1 for general coding chat", ctx);
+  // 3. Default: Claude Opus 4.6 (codebuff CLI default-mode model).
+  return decide(MODEL_GLM_5_1, "default route — Claude Opus 4.6 (codebuff default-mode model)", ctx);
 }
 
 function decide(model: string, reason: string, ctx: RouteContext): RouteDecision {

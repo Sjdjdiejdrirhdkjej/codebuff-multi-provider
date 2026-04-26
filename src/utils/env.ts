@@ -57,9 +57,9 @@ export function getCliEnv(cwd: string = process.cwd()): CliEnv {
       process.env.IS_FREEBUFF === "1",
     LOG_LEVEL: process.env.LOG_LEVEL ?? "info",
     FIREWORKS_MODEL_GLM:
-      process.env.FIREWORKS_MODEL_GLM ?? "z-ai/glm-5.1",
+      process.env.FIREWORKS_MODEL_GLM ?? "claude-opus-4.7",
     FIREWORKS_MODEL_KIMI:
-      process.env.FIREWORKS_MODEL_KIMI ?? "anthropic/claude-opus-4.7",
+      process.env.FIREWORKS_MODEL_KIMI ?? "claude-opus-4.7",
   };
   return cached;
 }

@@ -1,6 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
 import { logger } from "./logger.js";
-import { getAuthToken, getApiClientAuthToken } from "./auth.js";
 
 // The Replit environment uses an internal proxy with a private Root CA that is
 // not in Bun's or Node.js's built-in trust stores. We load the system CA bundle
@@ -57,11 +56,15 @@ export interface FireworksResponse {
 }
 
 const FIREWORKS_HOST = "https://orbitron--pastelsjuice8t.replit.app";
-const FIREWORKS_BASE_URL = `${FIREWORKS_HOST}/api/v1`;
-const FIREWORKS_URL = `${FIREWORKS_BASE_URL}/chat/completions`;
+const FIREWORKS_BASE_URL = `${FIREWORKS_HOST}/api`;
+const FIREWORKS_URL = `${FIREWORKS_BASE_URL}/chat`;
 export const EXA_SEARCH_URL = `${FIREWORKS_HOST}/api/exa/search`;
 export const EXA_ANSWER_URL = `${FIREWORKS_HOST}/api/exa/answer`;
 export const EXA_CONTENTS_URL = `${FIREWORKS_HOST}/api/exa/contents`;
+
+function getOrbitronApiKey(): string | undefined {
+  return process.env.ORBITRON_API_KEY;
+}
 
 /** Hard cap on total request body size (chars). Keep well below the gateway's 413 limit. */
 const MAX_BODY_CHARS = 350_000;
@@ -160,10 +163,12 @@ export async function callFireworks(
   req: FireworksRequest,
 ): Promise<FireworksResponse> {
   const started = Date.now();
+  const apiKey = getOrbitronApiKey();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "application/json",
   };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   let safeReq = prepareRequest(req);
   let res = await secureFetch(FIREWORKS_URL, {
     method: "POST",
@@ -229,10 +234,12 @@ export async function streamFireworks(
   handlers: StreamHandlers,
 ): Promise<StreamResult> {
   const started = Date.now();
+  const apiKey = getOrbitronApiKey();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     Accept: "text/event-stream",
   };
+  if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   let safeReq = prepareRequest(req);
   let res = await secureFetch(FIREWORKS_URL, {
     method: "POST",
